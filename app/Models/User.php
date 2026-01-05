@@ -134,6 +134,17 @@ class User extends Authenticatable
     {
         return $query->where('user_type', UserType::LOCAL);
     }
+    public function pointContracts() { return $this->hasMany(\App\Models\UserPointContract::class); }
+public function pointCredits() { return $this->hasMany(\App\Models\PointCredit::class); }
+public function pointRedemptions() { return $this->hasMany(\App\Models\PointRedemption::class); }
+
+public function getPointsBalanceAttribute(): int
+{
+    // suma de créditos en contratos activos (no vencidos)
+    return (int) $this->pointCredits()
+        ->whereHas('contract', fn($q)=>$q->active())
+        ->sum(\DB::raw('points - consumed_points'));
+}
 
     /**
      * Scope para usuarios API

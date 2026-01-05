@@ -27,6 +27,11 @@ return [
         'secret' => env('AWS_SECRET_ACCESS_KEY'),
         'region' => env('AWS_DEFAULT_REGION', 'us-east-1'),
     ],
+    'piletas' => [
+    'internal_url' => env('PILETAS_INTERNAL_URL'),
+    'internal_key' => env('PILETAS_INTERNAL_KEY'),
+],
+
 	   'socios' => [
         'base'     => env('SOCIOS_API_BASE', 'https://clubvillamitre.com/api_back_socios'),
         'login'    => env('SOCIOS_API_LOGIN', 'surtek'),
