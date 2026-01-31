@@ -7,6 +7,7 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Middleware\EnsureProfessor;
 use App\Http\Middleware\EnsureAdmin;
 use App\Http\Middleware\CheckLicense;
+use App\Http\Middleware\Authenticate;
 
 return Application::configure(basePath: dirname(__DIR__))
     ->withRouting(
@@ -25,6 +26,12 @@ return Application::configure(basePath: dirname(__DIR__))
         },
     )
     ->withMiddleware(function (Middleware $middleware): void {
+        // Reemplazar el middleware de autenticación por defecto con el nuestro personalizado
+        $middleware->replace(
+            \Illuminate\Auth\Middleware\Authenticate::class,
+            Authenticate::class
+        );
+        
         // Alias de middleware de rutas
         $middleware->alias([
             'professor' => EnsureProfessor::class,
@@ -56,7 +63,8 @@ return Application::configure(basePath: dirname(__DIR__))
                 if ($e instanceof \Illuminate\Auth\AuthenticationException) {
                     return response()->json([
                         'success' => false,
-                        'message' => 'No autenticado'
+                        'message' => 'Unauthenticated',
+                        'error' => 'authentication_required'
                     ], 401);
                 }
                 
@@ -64,7 +72,8 @@ return Application::configure(basePath: dirname(__DIR__))
                 if ($e instanceof \Illuminate\Auth\Access\AuthorizationException) {
                     return response()->json([
                         'success' => false,
-                        'message' => 'No autorizado'
+                        'message' => 'Forbidden',
+                        'error' => 'authorization_failed'
                     ], 403);
                 }
                 

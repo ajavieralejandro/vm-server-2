@@ -159,3 +159,4 @@ Route::prefix('sys')->group(function () {
 
 // Incluir rutas de administración
 require __DIR__.'/admin.php';
+
