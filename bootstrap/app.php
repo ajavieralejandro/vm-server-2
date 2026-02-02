@@ -47,24 +47,23 @@ return Application::configure(basePath: dirname(__DIR__))
     ->withExceptions(function (Exceptions $exceptions): void {
         // Configurar manejo de excepciones para rutas API
         $exceptions->render(function (Throwable $e, $request) {
-            // Si es una ruta API o espera JSON, devolver respuesta JSON
+            // ✅ IMPORTANTE: Si es una ruta API o cliente espera JSON, SIEMPRE devolver JSON
             if ($request->is('api/*') || $request->expectsJson()) {
                 
                 // Manejar ValidationException específicamente
                 if ($e instanceof \Illuminate\Validation\ValidationException) {
                     return response()->json([
                         'success' => false,
-                        'message' => 'Error de validación',
+                        'message' => 'Validation failed',
                         'errors' => $e->errors()
                     ], 422);
                 }
                 
-                // Manejar errores de autenticación
+                // ✅ Manejar errores de autenticación (NUNCA redirect en API)
                 if ($e instanceof \Illuminate\Auth\AuthenticationException) {
                     return response()->json([
                         'success' => false,
-                        'message' => 'Unauthenticated',
-                        'error' => 'authentication_required'
+                        'message' => 'Unauthenticated.'
                     ], 401);
                 }
                 
@@ -72,8 +71,7 @@ return Application::configure(basePath: dirname(__DIR__))
                 if ($e instanceof \Illuminate\Auth\Access\AuthorizationException) {
                     return response()->json([
                         'success' => false,
-                        'message' => 'Forbidden',
-                        'error' => 'authorization_failed'
+                        'message' => 'Forbidden'
                     ], 403);
                 }
                 
@@ -81,7 +79,7 @@ return Application::configure(basePath: dirname(__DIR__))
                 if ($e instanceof \Symfony\Component\HttpKernel\Exception\NotFoundHttpException) {
                     return response()->json([
                         'success' => false,
-                        'message' => 'Endpoint no encontrado'
+                        'message' => 'Not found'
                     ], 404);
                 }
                 
@@ -89,8 +87,16 @@ return Application::configure(basePath: dirname(__DIR__))
                 if ($e instanceof \Symfony\Component\HttpKernel\Exception\MethodNotAllowedHttpException) {
                     return response()->json([
                         'success' => false,
-                        'message' => 'Método no permitido'
+                        'message' => 'Method not allowed'
                     ], 405);
+                }
+                
+                // Manejar errores HTTP genéricos
+                if ($e instanceof \Symfony\Component\HttpKernel\Exception\HttpException) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => $e->getMessage() ?: 'HTTP error'
+                    ], $e->getStatusCode());
                 }
                 
                 // Para otros errores, devolver error genérico
@@ -98,11 +104,11 @@ return Application::configure(basePath: dirname(__DIR__))
                 
                 return response()->json([
                     'success' => false,
-                    'message' => config('app.debug') ? $e->getMessage() : 'Error interno del servidor',
+                    'message' => config('app.debug') ? $e->getMessage() : 'Internal server error',
                     'debug' => config('app.debug') ? [
+                        'exception' => class_basename($e),
                         'file' => $e->getFile(),
                         'line' => $e->getLine(),
-                        'trace' => $e->getTraceAsString()
                     ] : null
                 ], $statusCode);
             }
