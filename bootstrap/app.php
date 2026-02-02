@@ -38,6 +38,18 @@ return Application::configure(basePath: dirname(__DIR__))
             'admin' => EnsureAdmin::class,
             'license' => CheckLicense::class,
         ]);
+
+            // Evitar redirecciones a 'login' para requests API
+            // En Laravel 11 soportamos redirectGuestsTo para personalizar el destino
+            $middleware->redirectGuestsTo(function ($request) {
+                // Si es una request API o el cliente espera JSON, NO redirigir (retornar null)
+                if ($request->expectsJson() || $request->is('api/*')) {
+                    return null;
+                }
+
+                // Para web: retornar route('login') solo si existe, sino fallback a '/login'
+                return \Illuminate\Support\Facades\Route::has('login') ? route('login') : '/login';
+            });
         
         // Aplicar middleware de licencia globalmente a todas las rutas API
         $middleware->api(append: [

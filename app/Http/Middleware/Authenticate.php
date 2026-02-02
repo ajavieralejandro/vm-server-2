@@ -4,6 +4,7 @@ namespace App\Http\Middleware;
 
 use Illuminate\Auth\Middleware\Authenticate as Middleware;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Route;
 
 class Authenticate extends Middleware
 {
@@ -25,7 +26,7 @@ class Authenticate extends Middleware
         }
 
         // Para rutas web, solo redirigir si la ruta 'login' existe
-        if ($request->route() && route('login', [], false)) {
+        if ($request->route() && Route::has('login')) {
             return route('login');
         }
 
