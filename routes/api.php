@@ -136,8 +136,8 @@ Route::middleware('auth:sanctum')->group(function () {
         // ---- NUEVO: auto-asignación de socios
         Route::get('socios', [ProfesorSocioController::class, 'index']);
         Route::get('socios/disponibles', [ProfesorSocioController::class, 'disponibles']);
-        Route::post('socios/{socioId}', [ProfesorSocioController::class, 'asignarme']);
-        Route::delete('socios/{socioId}', [ProfesorSocioController::class, 'quitar']);
+        Route::post('socios/{socio}', [ProfesorSocioController::class, 'store']);
+        Route::delete('socios/{socio}', [ProfesorSocioController::class, 'destroy']);
     });
 
     // Estudiantes
