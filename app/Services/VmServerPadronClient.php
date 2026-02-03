@@ -14,17 +14,10 @@ class VmServerPadronClient
 
     public function __construct()
     {
-        $config = config('services.vmserver');
+        $config = config('services.vmserver') ?? [];
         
-        if (empty($config['base_url'])) {
-            throw new RuntimeException('VMSERVER_BASE_URL is not configured');
-        }
-        if (empty($config['internal_token'])) {
-            throw new RuntimeException('VMSERVER_INTERNAL_TOKEN is not configured');
-        }
-
-        $this->baseUrl = $config['base_url'];
-        $this->internalToken = $config['internal_token'];
+        $this->baseUrl = $config['base_url'] ?? '';
+        $this->internalToken = $config['internal_token'] ?? '';
         $this->timeout = $config['timeout'] ?? 20;
     }
 
