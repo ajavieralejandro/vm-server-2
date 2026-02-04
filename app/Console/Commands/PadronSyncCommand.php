@@ -80,10 +80,10 @@ class PadronSyncCommand extends Command
                 $first = (is_array($data) && isset($data[0]) && is_array($data[0])) ? $data[0] : null;
                 logger()->info('PadronSync: fetchSocios response summary', [
                     'response_type' => gettype($response),
-                    'response_keys' => is_array($response) ? array_slice(array_keys($response), 0, 30) : null,
+                    'response_keys' => is_array($response) ? array_slice(array_keys($response), 0, 20) : null,
                     'data_type' => gettype($data),
                     'data_count' => is_array($data) ? count($data) : null,
-                    'first_item_keys' => is_array($first) ? array_slice(array_keys($first), 0, 60) : null,
+                    'first_item_keys' => is_array($first) ? array_slice(array_keys($first), 0, 40) : null,
                 ]);
 
                 // Si no hay data, evitar fallos raros
@@ -190,7 +190,7 @@ class PadronSyncCommand extends Command
                         'preview' => $preview,
                     ]);
                     // Tirar excepción para cortar y ubicar EXACTO el culpable
-                    throw new \RuntimeException("Non-scalar en payload antes de upsert: {$k} (row {$i})");
+                    throw new \RuntimeException("Non-scalar: {$k} row {$i} dni=" . ($row['dni'] ?? 'null') . " sid=" . ($row['sid'] ?? 'null'));
                 }
             }
         }
