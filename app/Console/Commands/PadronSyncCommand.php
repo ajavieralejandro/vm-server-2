@@ -7,6 +7,7 @@ use App\Models\SyncState;
 use App\Services\VmServerPadronClient;
 use Illuminate\Console\Command;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Arr;
 
 class PadronSyncCommand extends Command
 {
@@ -40,12 +41,12 @@ class PadronSyncCommand extends Command
             $perPage = (int) $this->option('per-page');
             $this->line("[LOG] $since RAW (sin normalizar): {$since}");
 
-            // Punto 3: Normalizar formato de $since para vmServer (Y-m-d\TH:i:s, sin Z)
+            // Punto 3: Normalizar formato de $since para vmServer (Y-m-d\TH:i:sZ, Z literal)
             if (!empty($since)) {
                 $sinceRaw = $since;
-                    $since = Carbon::parse($since)->utc()->format('Y-m-d\TH:i:s') . 'Z';
-                $this->line("[LOG] $since NORMALIZADO: {$since}");
-                $this->line("       Raw: {$sinceRaw}");
+                $since = Carbon::parse($since)->utc()->format('Y-m-d\TH:i:s') . 'Z';
+                $this->line("[LOG] RAW (sin normalizar): {$sinceRaw}");
+                $this->line("[LOG] NORMALIZADO: {$since}");
             }
 
             $this->info("🔄 Iniciando sincronización de socios desde vmServer");
@@ -58,8 +59,10 @@ class PadronSyncCommand extends Command
             $totalProcessed = 0;
             $lastServerTime = null;
 
-            while (true) {
-                $this->line("📄 Obteniendo página {$page}...");
+            $currentPage = 0;
+            $lastPage = 0;
+            do {
+                $this->info("📄 Obteniendo página {$page}...");
 
                 // Punto 4: Armar params para vmServer
                 $params = [
@@ -67,59 +70,51 @@ class PadronSyncCommand extends Command
                     'page' => $page,
                     'per_page' => $perPage,
                 ];
-                $this->line("[LOG] Params enviados a client.fetchSocios(): " . json_encode($params));
+
+                $this->line('[LOG] Params enviados a client.fetchSocios(): ' . json_encode($params));
 
                 $response = $this->client->fetchSocios($params);
 
-                // Instrumentation: log safe diagnostics about the response
-                try {
-                    $respType = gettype($response);
-                    $dataCount = 'n/a';
-                    $firstItemKeys = [];
-                    if (is_array($response) && array_key_exists('data', $response) && is_array($response['data'])) {
-                        $dataCount = count($response['data']);
-                        if ($dataCount > 0 && is_array($response['data'][0])) {
-                            $firstItemKeys = array_keys($response['data'][0]);
-                        }
+                // (2) Logs seguros post-fetch (sin concatenar arrays)
+                $data = is_array($response) ? ($response['data'] ?? null) : null;
+                $first = (is_array($data) && isset($data[0]) && is_array($data[0])) ? $data[0] : null;
+                logger()->info('PadronSync: fetchSocios response summary', [
+                    'response_type' => gettype($response),
+                    'response_keys' => is_array($response) ? array_slice(array_keys($response), 0, 30) : null,
+                    'data_type' => gettype($data),
+                    'data_count' => is_array($data) ? count($data) : null,
+                    'first_item_keys' => is_array($first) ? array_slice(array_keys($first), 0, 60) : null,
+                ]);
+
+                // Si no hay data, evitar fallos raros
+                if (!is_array($data)) {
+                    logger()->warning('PadronSync: response[data] no es array', [
+                        'data' => $data,
+                    ]);
+                    break;
+                }
+
+                $rows = [];
+                foreach ($data as $item) {
+                    if (!is_array($item)) {
+                        continue;
                     }
-                    $this->line('[LOG] fetchSocios response type: ' . $respType);
-                    $this->line('[LOG] fetchSocios data count: ' . $dataCount);
-                    $this->line('[LOG] fetchSocios first item keys: ' . json_encode($firstItemKeys, JSON_UNESCAPED_UNICODE));
-                } catch (\Throwable $t) {
-                    // Non-fatal logging failure
-                    logger()->warning('PadronSync: failed to log response diagnostics', ['err' => $t->getMessage()]);
+                    $rows[] = $this->mapItemToRow($item);
                 }
 
-                $items = $response['data'] ?? [];
-                $currentPage = $response['pagination']['current_page'] ?? $page;
-                $lastPage = $response['pagination']['last_page'] ?? 1;
-                $serverTime = $response['server_time'] ?? now()->toIso8601String();
+                $this->upsertSocios($rows);
 
-                if (empty($items)) {
-                    $this->warn("  ⚠️  Sin resultados en página {$page}");
-                    break;
-                }
-
-                // Procesar socios
-                $upserted = $this->upsertSocios($items);
-                $totalUpserted += $upserted;
-                $totalProcessed += count($items);
-
-                $this->info("  ✓ Página {$currentPage}: {$upserted}/{count($items)} upsertados");
-
-                $lastServerTime = $serverTime;
-
-                // Verificar si llegamos a la última página
-                if ($currentPage >= $lastPage) {
-                    break;
-                }
+                $currentPage = (int) ($response['pagination']['current_page'] ?? $page);
+                $lastPage = (int) ($response['pagination']['last_page'] ?? $page);
 
                 $page++;
-            }
+            } while ($currentPage < $lastPage);
 
-            // Actualizar last_sync - normalizar formato para vmServer (Y-m-d\TH:i:s, sin Z)
-            $syncTime = $lastServerTime ?? now()->toIso8601String();
-                $syncTime = Carbon::parse($syncTime)->utc()->format('Y-m-d\TH:i:s') . 'Z';
+            // Guardar last sync (mismo formato que vmServer espera)
+            $lastServerTime = $response['server_time'] ?? null;
+
+            $syncTime = $lastServerTime ?? now('UTC')->format('Y-m-d\TH:i:s') . 'Z';
+            $syncTime = Carbon::parse($syncTime)->utc()->format('Y-m-d\TH:i:s') . 'Z';
             SyncState::setValue('padron_last_sync_at', $syncTime);
 
             $this->newLine();
@@ -129,26 +124,15 @@ class PadronSyncCommand extends Command
             $this->info("  • Último sync: {$syncTime}");
 
             return 0;
-        } catch (\Exception $e) {
-            // Log file, line and first 10 trace frames in a safe structured way
-            $trace = $e->getTrace();
-            $frames = [];
-            for ($i = 0; $i < min(10, count($trace)); $i++) {
-                $f = $trace[$i];
-                $frames[] = [
-                    'file' => $f['file'] ?? null,
-                    'line' => $f['line'] ?? null,
-                    'function' => $f['function'] ?? null,
-                    'class' => $f['class'] ?? null,
-                ];
-            }
+        } catch (\Throwable $e) {
+            // (1) Catch con file/line + primeros 10 frames del trace
+            $this->error("❌ Error en la sincronización: " . $e->getMessage());
             logger()->error('PadronSync: exception', [
                 'message' => $e->getMessage(),
                 'file' => $e->getFile(),
                 'line' => $e->getLine(),
-                'frames' => $frames,
+                'trace_top10' => array_slice($e->getTrace(), 0, 10),
             ]);
-            $this->error("❌ Error en la sincronización: " . $e->getMessage());
             return 1;
         }
     }
@@ -181,94 +165,60 @@ class PadronSyncCommand extends Command
     /**
      * Realizar upsert de socios, separando por sid y dni
      */
-    protected function upsertSocios(array $items): int
+    protected function upsertSocios(array $rows): void
     {
-        $rowsWithSid = [];
-        $rowsWithoutSid = [];
+        if (empty($rows)) {
+            return;
+        }
 
-        foreach ($items as $item) {
-            $row = $this->mapItemToRow($item);
-
-            if (!empty($row['sid'])) {
-                $rowsWithSid[] = $row;
-            } else {
-                $rowsWithoutSid[] = $row;
+        // (3) Detector antes de persistir: encuentra el primer valor no escalar
+        foreach ($rows as $i => $row) {
+            if (!is_array($row)) {
+                continue;
+            }
+            foreach ($row as $k => $v) {
+                if (is_array($v) || is_object($v)) {
+                    $preview = is_object($v)
+                        ? ('object:' . get_class($v))
+                        : substr(json_encode($v, JSON_UNESCAPED_UNICODE), 0, 500);
+                    logger()->error('PadronSync: non-scalar value detected before upsert', [
+                        'row_index' => $i,
+                        'dni' => $row['dni'] ?? null,
+                        'sid' => $row['sid'] ?? null,
+                        'key' => $k,
+                        'type' => gettype($v),
+                        'preview' => $preview,
+                    ]);
+                    // Tirar excepción para cortar y ubicar EXACTO el culpable
+                    throw new \RuntimeException("Non-scalar en payload antes de upsert: {$k} (row {$i})");
+                }
             }
         }
 
-        $upserted = 0;
+        // (4) Fix robusto: si querés que NO corte sino que convierta automáticamente,
+        // descomentá este bloque y comentá el throw de arriba.
+        //
+        // foreach ($rows as $i => $row) {
+        //     foreach ($row as $k => $v) {
+        //         if (is_array($v) || is_object($v)) {
+        //             $rows[$i][$k] = json_encode($v, JSON_UNESCAPED_UNICODE);
+        //         }
+        //     }
+        // }
 
-        // Upsert por SID
+        // separa por sid vs dni
+        $rowsWithSid = array_values(array_filter($rows, fn ($r) => !empty($r['sid'] ?? null)));
+        $rowsWithoutSid = array_values(array_filter($rows, fn ($r) => empty($r['sid'] ?? null) && !empty($r['dni'] ?? null)));
+
+        $cols = $this->getUpsertableColumns();
+
         if (!empty($rowsWithSid)) {
-            // Detector y conversor: revisar tipos antes de persistir
-            foreach ($rowsWithSid as $idx => $row) {
-                foreach ($row as $k => $v) {
-                    if (is_array($v) || is_object($v)) {
-                        $preview = null;
-                        try {
-                            $preview = substr(json_encode($v, JSON_UNESCAPED_UNICODE), 0, 500);
-                        } catch (\Throwable $_) {
-                            $preview = 'json_encode_failed';
-                        }
-                        logger()->error('PadronSync: non-scalar value detected before upsert', [
-                            'side' => 'withSid',
-                            'index' => $idx,
-                            'key' => $k,
-                            'type' => is_object($v) ? 'object' : 'array',
-                            'dni' => $row['dni'] ?? null,
-                            'sid' => $row['sid'] ?? null,
-                            'preview' => $preview,
-                        ]);
-                        // Convertir a JSON string para evitar Array to string conversion
-                        $rowsWithSid[$idx][$k] = json_encode($v, JSON_UNESCAPED_UNICODE);
-                        logger()->info('PadronSync: converted non-scalar to JSON string', ['key' => $k, 'index' => $idx]);
-                    }
-                }
-            }
-            SocioPadron::upsert(
-                $rowsWithSid,
-                ['sid'],
-                $this->getUpsertableColumns()
-            );
-            $upserted += count($rowsWithSid);
+            SocioPadron::upsert($rowsWithSid, ['sid'], $cols);
         }
 
-        // Upsert por DNI
         if (!empty($rowsWithoutSid)) {
-            // Detector y conversor: revisar tipos antes de persistir
-            foreach ($rowsWithoutSid as $idx => $row) {
-                foreach ($row as $k => $v) {
-                    if (is_array($v) || is_object($v)) {
-                        $preview = null;
-                        try {
-                            $preview = substr(json_encode($v, JSON_UNESCAPED_UNICODE), 0, 500);
-                        } catch (\Throwable $_) {
-                            $preview = 'json_encode_failed';
-                        }
-                        logger()->error('PadronSync: non-scalar value detected before upsert', [
-                            'side' => 'withoutSid',
-                            'index' => $idx,
-                            'key' => $k,
-                            'type' => is_object($v) ? 'object' : 'array',
-                            'dni' => $row['dni'] ?? null,
-                            'sid' => $row['sid'] ?? null,
-                            'preview' => $preview,
-                        ]);
-                        // Convertir a JSON string para evitar Array to string conversion
-                        $rowsWithoutSid[$idx][$k] = json_encode($v, JSON_UNESCAPED_UNICODE);
-                        logger()->info('PadronSync: converted non-scalar to JSON string', ['key' => $k, 'index' => $idx]);
-                    }
-                }
-            }
-            SocioPadron::upsert(
-                $rowsWithoutSid,
-                ['dni'],
-                $this->getUpsertableColumns()
-            );
-            $upserted += count($rowsWithoutSid);
+            SocioPadron::upsert($rowsWithoutSid, ['dni'], $cols);
         }
-
-        return $upserted;
     }
 
     /**
@@ -276,18 +226,30 @@ class PadronSyncCommand extends Command
      */
     protected function mapItemToRow(array $item): array
     {
+        // Asegurar que raw/hab_controles_raw siempre sean string JSON (si vienen como array)
+        // (Esto evita el "Array to string conversion" si esos campos llegan no escalares)
+        $raw = $item['raw'] ?? $item; // si tu API no manda 'raw', guardamos el item completo
+        if (is_array($raw) || is_object($raw)) {
+            $raw = json_encode($raw, JSON_UNESCAPED_UNICODE);
+        }
+
+        $habRaw = $item['hab_controles_raw'] ?? null;
+        if (is_array($habRaw) || is_object($habRaw)) {
+            $habRaw = json_encode($habRaw, JSON_UNESCAPED_UNICODE);
+        }
+
         return [
             'dni' => $item['dni'] ?? null,
             'sid' => $item['sid'] ?? null,
-            'apynom' => $item['apynom'] ?? $item['apellido'] ?? null,
+            'apynom' => $item['apynom'] ?? null,
             'barcode' => $item['barcode'] ?? null,
-            'saldo' => isset($item['saldo']) ? (float) $item['saldo'] : null,
-            'semaforo' => isset($item['semaforo']) ? (int) $item['semaforo'] : null,
-            'ult_impago' => isset($item['ult_impago']) ? (int) $item['ult_impago'] : null,
-            'acceso_full' => (bool) ($item['acceso_full'] ?? false),
-            'hab_controles' => (bool) ($item['hab_controles'] ?? true),
-            'hab_controles_raw' => isset($item['hab_controles_raw']) ? json_encode((array) $item['hab_controles_raw'], JSON_UNESCAPED_UNICODE) : null,
-            'raw' => isset($item) ? json_encode($item, JSON_UNESCAPED_UNICODE) : null, // Guardar el objeto completo como JSON string
+            'saldo' => $item['saldo'] ?? null,
+            'semaforo' => $item['semaforo'] ?? null,
+            'ult_impago' => $item['ult_impago'] ?? null,
+            'acceso_full' => $item['acceso_full'] ?? null,
+            'hab_controles' => $item['hab_controles'] ?? null,
+            'hab_controles_raw' => $habRaw,
+            'raw' => $raw,
         ];
     }
 
