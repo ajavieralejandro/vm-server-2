@@ -11,6 +11,9 @@ use App\Http\Controllers\Gym\Admin\DailyTemplateController as GymDailyTemplateCo
 use App\Http\Controllers\Gym\Admin\WeeklyTemplateController as GymWeeklyTemplateController;
 use App\Http\Controllers\Gym\Admin\WeeklyAssignmentController as GymWeeklyAssignmentController;
 
+// NUEVO: Controller para asignación directa de alumnos a profesor (admin)
+use App\Http\Controllers\Gym\Admin\ProfessorStudentController;
+
 use App\Http\Controllers\Gym\Mobile\MyPlanController as GymMyPlanController;
 
 use App\Http\Controllers\Admin\AssignmentController as AdminAssignmentController;
@@ -91,6 +94,10 @@ Route::middleware('auth:sanctum')->group(function () {
 
         Route::get('profesores/{profesor}/socios', [AdminProfesorSocioController::class, 'sociosPorProfesor']);
         Route::post('profesores/{profesor}/socios', [AdminProfesorSocioController::class, 'syncSocios']);
+
+        // Asignación directa de alumnos a profesor (admin)
+        Route::get('professors/{professor}/students', [ProfessorStudentController::class, 'index']);
+        Route::post('professors/{professor}/assign-students', [ProfessorStudentController::class, 'assign']);
     });
 
     // ✅ Compatibilidad por el doble /api de tu frontend (si aún lo necesitás)
