@@ -7,7 +7,6 @@ use App\Models\SyncState;
 use App\Services\VmServerPadronClient;
 use Illuminate\Console\Command;
 use Illuminate\Support\Carbon;
-use Illuminate\Support\Arr;
 
 class PadronSyncCommand extends Command
 {
@@ -16,7 +15,7 @@ class PadronSyncCommand extends Command
      *
      * @var string
      */
-    protected $signature = 'padron:sync {--since=} {--per-page=500}';
+    protected $signature = 'padron:sync {--since=} {--per-page=500} {--all}';
 
     /**
      * The console command description.
@@ -36,37 +35,44 @@ class PadronSyncCommand extends Command
     public function handle()
     {
         try {
-            // Punto 1: Obtener $since sin normalizar
-            $since = $this->determineSince();
             $perPage = (int) $this->option('per-page');
-            $this->line("[SYNC] since RAW: {$since}");
 
-            // Punto 3: Normalizar formato de $since para vmServer (Y-m-d\TH:i:sZ, Z literal)
-            if (!empty($since)) {
-                $sinceRaw = $since;
-                $since = Carbon::parse($since)->utc()->format('Y-m-d\TH:i:s') . 'Z';
-                $this->line("[SYNC] since NORMALIZADO: {$since}");
+            // ✅ NUEVO: --all para traer TODO (sin updated_since)
+            $forceAll = (bool) $this->option('all');
+            if ($forceAll) {
+                $since = null;
+                $this->line("[SYNC] --all usado: NO se enviará updated_since (traer todo)");
             } else {
-                $since = null; // No enviar updated_since si está vacío
-                $this->line("[SYNC] since is empty: updated_since will NOT be sent");
+                // Punto 1: Obtener $since sin normalizar
+                $since = $this->determineSince();
+                $this->line("[SYNC] since RAW: {$since}");
+
+                // Punto 3: Normalizar formato de $since para vmServer (Y-m-d\TH:i:sZ, Z literal)
+                if (!empty($since)) {
+                    $since = Carbon::parse($since)->utc()->format('Y-m-d\TH:i:s') . 'Z';
+                    $this->line("[SYNC] since NORMALIZADO: {$since}");
+                } else {
+                    $since = null; // No enviar updated_since si está vacío
+                    $this->line("[SYNC] since is empty: updated_since will NOT be sent");
+                }
             }
 
             $this->info("🔄 Iniciando sincronización de socios desde vmServer");
             $this->info("  • Desde: " . ($since ?? 'N/A (no filter)'));
-            $this->info("  • Por página: {$perPage}");
+            $this->info("  • Por página (pedido): {$perPage}");
             $this->newLine();
 
             $page = 1;
             $totalUpserted = 0;
             $totalProcessed = 0;
-            $lastServerTime = null;
 
             $currentPage = 0;
             $lastPage = 0;
+
             do {
                 $this->info("📄 Obteniendo página {$page}...");
 
-                // Punto 4: Armar params para vmServer (sin updated_since si está vacío)
+                // Params para vmServer
                 $params = [
                     'page' => $page,
                     'per_page' => $perPage,
@@ -79,26 +85,25 @@ class PadronSyncCommand extends Command
                     'page' => $page,
                     'since' => $since,
                     'per_page' => $perPage,
+                    'force_all' => $forceAll,
                 ]);
 
-                try {
-                    $response = $this->client->fetchSocios($params);
-                } catch (\Exception $e) {
-                    logger()->error('[SYNC] Fetch failed', [
-                        'page' => $page,
-                        'error' => $e->getMessage(),
-                    ]);
-                    throw $e;
+                $response = $this->client->fetchSocios($params);
+
+                $data = is_array($response) ? ($response['data'] ?? null) : null;
+                $pagination = is_array($response) ? ($response['pagination'] ?? []) : [];
+                $serverTime = is_array($response) ? ($response['server_time'] ?? null) : null;
+
+                $dataCount = is_array($data) ? count($data) : 0;
+
+                $this->line("[SYNC] data_count={$dataCount} current_page=" . ($pagination['current_page'] ?? '?') . " last_page=" . ($pagination['last_page'] ?? '?'));
+
+                // ✅ NUEVO: warn si el server fuerza otro per_page (por ej 50)
+                $serverPerPage = $pagination['per_page'] ?? null;
+                if ($serverPerPage !== null && (int) $serverPerPage !== (int) $perPage) {
+                    $this->warn("[SYNC] ⚠️ vmServer está usando per_page={$serverPerPage} (vos pediste {$perPage})");
                 }
 
-                // (2) Logs seguros post-fetch
-                $data = is_array($response) ? ($response['data'] ?? null) : null;
-                $pagination = $response['pagination'] ?? [];
-                $serverTime = $response['server_time'] ?? null;
-                
-                $dataCount = is_array($data) ? count($data) : 0;
-                $this->line("[SYNC] data_count={$dataCount} current_page=" . ($pagination['current_page'] ?? '?') . " last_page=" . ($pagination['last_page'] ?? '?'));
-                
                 logger()->info('PadronSync: fetchSocios response summary', [
                     'page' => $page,
                     'data_count' => $dataCount,
@@ -106,7 +111,7 @@ class PadronSyncCommand extends Command
                     'server_time' => $serverTime,
                 ]);
 
-                // Si no hay data, evitar fallos raros
+                // Si no hay data, cortar
                 if (!is_array($data) || empty($data)) {
                     $this->line("[SYNC] data is empty or not array on page {$page}");
                     logger()->warning('PadronSync: data empty or invalid', [
@@ -125,12 +130,10 @@ class PadronSyncCommand extends Command
                     $rows[] = $this->mapItemToRow($item);
                 }
 
-                // Incrementar totalProcessed
                 $totalProcessed += count($rows);
-                
+
                 $this->upsertSocios($rows);
-                
-                // Incrementar totalUpserted (asumimos que se upsertean todos los rows procesados)
+
                 $totalUpserted += count($rows);
 
                 $currentPage = (int) ($pagination['current_page'] ?? $page);
@@ -141,9 +144,9 @@ class PadronSyncCommand extends Command
 
             // Guardar last sync (mismo formato que vmServer espera)
             $lastServerTime = $response['server_time'] ?? null;
-
             $syncTime = $lastServerTime ?? now('UTC')->format('Y-m-d\TH:i:s') . 'Z';
             $syncTime = Carbon::parse($syncTime)->utc()->format('Y-m-d\TH:i:s') . 'Z';
+
             SyncState::setValue('padron_last_sync_at', $syncTime);
 
             $this->newLine();
@@ -156,11 +159,11 @@ class PadronSyncCommand extends Command
                 'total_processed' => $totalProcessed,
                 'total_upserted' => $totalUpserted,
                 'last_sync_at' => $syncTime,
+                'force_all' => $forceAll,
             ]);
 
             return 0;
         } catch (\Throwable $e) {
-            // (1) Catch con file/line + primeros 10 frames del trace
             $this->error("❌ Error en la sincronización: " . $e->getMessage());
             logger()->error('PadronSync: exception', [
                 'message' => $e->getMessage(),
@@ -177,21 +180,18 @@ class PadronSyncCommand extends Command
      */
     protected function determineSince(): string
     {
-        // Punto 1: Leer --since desde CLI
         if ($this->option('since')) {
             $cliSince = $this->option('since');
             $this->line("[LOG] --since de CLI: {$cliSince}");
             return $cliSince;
         }
 
-        // Punto 2: Leer desde SyncState
         $lastSync = SyncState::getValue('padron_last_sync_at');
         if ($lastSync) {
             $this->line("[LOG] last sync de SyncState: {$lastSync}");
             return $lastSync;
         }
 
-        // Default: últimas 24 horas
         $default = now()->subDay()->toIso8601String();
         $this->line("[LOG] usando default (24h atrás): {$default}");
         return $default;
@@ -206,7 +206,7 @@ class PadronSyncCommand extends Command
             return;
         }
 
-        // (3) Detector antes de persistir: encuentra el primer valor no escalar
+        // Detector antes de persistir: encuentra el primer valor no escalar
         foreach ($rows as $i => $row) {
             if (!is_array($row)) {
                 continue;
@@ -224,24 +224,11 @@ class PadronSyncCommand extends Command
                         'type' => gettype($v),
                         'preview' => $preview,
                     ]);
-                    // Tirar excepción para cortar y ubicar EXACTO el culpable
                     throw new \RuntimeException("Non-scalar: {$k} row {$i} dni=" . ($row['dni'] ?? 'null') . " sid=" . ($row['sid'] ?? 'null'));
                 }
             }
         }
 
-        // (4) Fix robusto: si querés que NO corte sino que convierta automáticamente,
-        // descomentá este bloque y comentá el throw de arriba.
-        //
-        // foreach ($rows as $i => $row) {
-        //     foreach ($row as $k => $v) {
-        //         if (is_array($v) || is_object($v)) {
-        //             $rows[$i][$k] = json_encode($v, JSON_UNESCAPED_UNICODE);
-        //         }
-        //     }
-        // }
-
-        // separa por sid vs dni
         $rowsWithSid = array_values(array_filter($rows, fn ($r) => !empty($r['sid'] ?? null)));
         $rowsWithoutSid = array_values(array_filter($rows, fn ($r) => empty($r['sid'] ?? null) && !empty($r['dni'] ?? null)));
 
@@ -261,13 +248,11 @@ class PadronSyncCommand extends Command
      */
     protected function mapItemToRow(array $item): array
     {
-        // Asegurar que raw siempre sea string JSON
         $raw = $item['raw'] ?? $item;
         if (is_array($raw) || is_object($raw)) {
             $raw = json_encode($raw, JSON_UNESCAPED_UNICODE);
         }
 
-        // Normalizar hab_controles: guardar original en hab_controles_raw, valor normalizado en hab_controles
         $habControlsRaw = $item['hab_controles'] ?? null;
         $habControls = $this->normalizeHabControles($habControlsRaw, $item['dni'] ?? null, $item['sid'] ?? null);
 
@@ -300,7 +285,6 @@ class PadronSyncCommand extends Command
      */
     protected function normalizeHabControles($value, ?string $dni, ?string $sid): int
     {
-        // Si es null o array vacío => 0
         if ($value === null || (is_array($value) && empty($value))) {
             if ($value === null || empty($value)) {
                 logger()->warning('PadronSync: hab_controles normalized to 0 (null or empty array)', [
@@ -312,7 +296,6 @@ class PadronSyncCommand extends Command
             return 0;
         }
 
-        // Si es array no vacío o object => 0
         if (is_array($value) || is_object($value)) {
             logger()->warning('PadronSync: hab_controles normalized to 0 (non-empty array/object)', [
                 'original_type' => gettype($value),
@@ -322,12 +305,10 @@ class PadronSyncCommand extends Command
             return 0;
         }
 
-        // Si es string o number => castealo a int
         if (is_string($value) || is_numeric($value)) {
             return (int) $value;
         }
 
-        // Otro tipo raro => 0
         logger()->warning('PadronSync: hab_controles normalized to 0 (unknown type)', [
             'original_type' => gettype($value),
             'original_value' => $value,
@@ -337,9 +318,6 @@ class PadronSyncCommand extends Command
         return 0;
     }
 
-    /**
-     * Obtener columnas que se pueden actualizar en upsert
-     */
     protected function getUpsertableColumns(): array
     {
         return [
