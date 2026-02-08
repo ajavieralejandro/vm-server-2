@@ -1,4 +1,5 @@
 <?php
+
 namespace App\Http\Controllers\Gym\Professor;
 
 use App\Http\Controllers\Controller;
@@ -7,49 +8,13 @@ use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Carbon\Carbon;
 
+// Models
+use App\Models\User;
+use App\Models\Gym\ProfessorStudentAssignment;
+use App\Models\Gym\TemplateAssignment;
+use App\Models\Gym\AssignmentProgress;
+
 class AssignmentController extends Controller
-{
-    /**
-     * Listar las asignaciones de plantillas de un alumno asignado a este profesor
-     */
-    public function studentTemplateAssignments(Request $request, int $studentId)
-    {
-        // Validar que studentId sea entero y exista
-        if (!is_numeric($studentId) || intval($studentId) != $studentId) {
-            return response()->json([
-                'success' => false,
-                'message' => 'El ID del alumno debe ser un entero válido.'
-            ], 422);
-        }
-
-        $student = \App\Models\User::find($studentId);
-        if (!$student) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Alumno no encontrado.'
-            ], 404);
-        }
-
-        // Verificar asignación activa
-        $asignacion = \App\Models\Gym\ProfessorStudentAssignment::where('professor_id', auth()->id())
-            ->where('student_id', $studentId)
-            ->where('status', 'active')
-            ->first();
-        if (!$asignacion) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Alumno no asignado a este profesor.'
-            ], 403);
-        }
-
-        $filters = method_exists($this, 'buildFilters') ? $this->buildFilters($request) : [];
-        $assignments = $this->assignmentService->getStudentTemplateAssignments($studentId, $filters);
-
-        return response()->json([
-            'success' => true,
-            'data' => $assignments
-        ]);
-    }
 {
     public function __construct(
         private AssignmentService $assignmentService
@@ -67,9 +32,64 @@ class AssignmentController extends Controller
             );
 
             return response()->json($students);
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             return response()->json([
                 'message' => 'Error al obtener estudiantes',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * GET /api/professor/students/{studentId}/template-assignments
+     * Listar las asignaciones de plantillas de un alumno asignado a este profesor
+     */
+    public function studentTemplateAssignments(Request $request, int $studentId): JsonResponse
+    {
+        try {
+            if ($studentId <= 0) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'El ID del alumno debe ser un entero válido.'
+                ], 422);
+            }
+
+            $student = User::query()->find($studentId);
+            if (!$student) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Alumno no encontrado.'
+                ], 404);
+            }
+
+            // Verificar que el alumno esté asignado al profesor autenticado
+            $asignacionActiva = ProfessorStudentAssignment::query()
+                ->where('professor_id', auth()->id())
+                ->where('student_id', $studentId)
+                ->where('status', 'active')
+                ->exists();
+
+            if (!$asignacionActiva) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Alumno no asignado a este profesor.'
+                ], 403);
+            }
+
+            $filters = $this->buildFilters($request);
+
+            // Service debe devolver lo que el front espera (array/collection/paginator)
+            $assignments = $this->assignmentService->getStudentTemplateAssignments($studentId, $filters);
+
+            return response()->json([
+                'success' => true,
+                'data' => $assignments
+            ], 200);
+
+        } catch (\Throwable $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al obtener las planillas',
                 'error' => $e->getMessage()
             ], 500);
         }
@@ -100,7 +120,7 @@ class AssignmentController extends Controller
                 'data' => $assignment
             ], 201);
 
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             return response()->json([
                 'message' => 'Error al asignar plantilla',
                 'error' => $e->getMessage()
@@ -114,16 +134,15 @@ class AssignmentController extends Controller
     public function show($assignmentId): JsonResponse
     {
         try {
-            $assignment = \App\Models\Gym\TemplateAssignment::with([
+            $assignment = TemplateAssignment::with([
                 'dailyTemplate.exercises.exercise',
                 'dailyTemplate.exercises.sets',
                 'professorStudentAssignment.student',
-                'progress' => function($query) {
+                'progress' => function ($query) {
                     $query->orderBy('scheduled_date');
                 }
             ])->findOrFail($assignmentId);
 
-            // Verificar que el profesor autenticado sea el dueño
             if ($assignment->professorStudentAssignment->professor_id !== auth()->id()) {
                 return response()->json([
                     'message' => 'No tienes permisos para ver esta asignación'
@@ -131,7 +150,7 @@ class AssignmentController extends Controller
             }
 
             return response()->json($assignment);
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             return response()->json([
                 'message' => 'Asignación no encontrada',
                 'error' => $e->getMessage()
@@ -153,9 +172,8 @@ class AssignmentController extends Controller
                 'status' => 'sometimes|in:active,paused,completed,cancelled'
             ]);
 
-            $assignment = \App\Models\Gym\TemplateAssignment::findOrFail($assignmentId);
+            $assignment = TemplateAssignment::findOrFail($assignmentId);
 
-            // Verificar permisos
             if ($assignment->professorStudentAssignment->professor_id !== auth()->id()) {
                 return response()->json([
                     'message' => 'No tienes permisos para modificar esta asignación'
@@ -169,7 +187,7 @@ class AssignmentController extends Controller
                 'data' => $assignment->fresh(['dailyTemplate', 'professorStudentAssignment.student'])
             ]);
 
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             return response()->json([
                 'message' => 'Error al actualizar asignación',
                 'error' => $e->getMessage()
@@ -183,20 +201,18 @@ class AssignmentController extends Controller
     public function unassignTemplate($assignmentId): JsonResponse
     {
         try {
-            $assignment = \App\Models\Gym\TemplateAssignment::findOrFail($assignmentId);
+            $assignment = TemplateAssignment::with(['professorStudentAssignment.student', 'dailyTemplate'])
+                ->findOrFail($assignmentId);
 
-            // Verificar permisos
             if ($assignment->professorStudentAssignment->professor_id !== auth()->id()) {
                 return response()->json([
                     'message' => 'No tienes permisos para eliminar esta asignación'
                 ], 403);
             }
 
-            // Guardar info para respuesta
-            $studentName = $assignment->professorStudentAssignment->student->name;
-            $templateTitle = $assignment->dailyTemplate->title;
+            $studentName = $assignment->professorStudentAssignment->student->name ?? 'Alumno';
+            $templateTitle = $assignment->dailyTemplate->title ?? 'Plantilla';
 
-            // Eliminar asignación (cascade eliminará progreso automáticamente)
             $assignment->delete();
 
             return response()->json([
@@ -205,7 +221,7 @@ class AssignmentController extends Controller
                 'template_title' => $templateTitle
             ]);
 
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             return response()->json([
                 'message' => 'Error al desasignar plantilla',
                 'error' => $e->getMessage()
@@ -235,7 +251,7 @@ class AssignmentController extends Controller
                 'data' => $progress
             ]);
 
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             return response()->json([
                 'message' => 'Error al agregar feedback',
                 'error' => $e->getMessage()
@@ -249,8 +265,8 @@ class AssignmentController extends Controller
     public function studentProgress($studentId, Request $request): JsonResponse
     {
         try {
-            // Verificar que el estudiante esté asignado al profesor
-            $assignment = \App\Models\Gym\ProfessorStudentAssignment::where('professor_id', auth()->id())
+            $assignment = ProfessorStudentAssignment::query()
+                ->where('professor_id', auth()->id())
                 ->where('student_id', $studentId)
                 ->where('status', 'active')
                 ->first();
@@ -262,13 +278,13 @@ class AssignmentController extends Controller
             }
 
             $assignments = $this->assignmentService->getStudentTemplateAssignments(
-                $studentId,
+                (int) $studentId,
                 $this->buildFilters($request)
             );
 
             return response()->json($assignments);
 
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             return response()->json([
                 'message' => 'Error al obtener progreso del estudiante',
                 'error' => $e->getMessage()
@@ -283,9 +299,8 @@ class AssignmentController extends Controller
     {
         try {
             $stats = $this->assignmentService->getProfessorStats(auth()->id());
-
             return response()->json($stats);
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             return response()->json([
                 'message' => 'Error al obtener estadísticas',
                 'error' => $e->getMessage()
@@ -300,17 +315,17 @@ class AssignmentController extends Controller
     {
         try {
             $today = now()->toDateString();
-            
-            $sessions = \App\Models\Gym\AssignmentProgress::with([
+
+            $sessions = AssignmentProgress::with([
                 'templateAssignment.dailyTemplate',
                 'templateAssignment.professorStudentAssignment.student'
             ])
-            ->whereHas('templateAssignment.professorStudentAssignment', function($query) {
-                $query->where('professor_id', auth()->id());
-            })
-            ->where('scheduled_date', $today)
-            ->orderBy('status')
-            ->get();
+                ->whereHas('templateAssignment.professorStudentAssignment', function ($query) {
+                    $query->where('professor_id', auth()->id());
+                })
+                ->where('scheduled_date', $today)
+                ->orderBy('status')
+                ->get();
 
             return response()->json([
                 'date' => $today,
@@ -320,7 +335,7 @@ class AssignmentController extends Controller
                 'pending' => $sessions->where('status', 'pending')->count()
             ]);
 
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             return response()->json([
                 'message' => 'Error al obtener sesiones de hoy',
                 'error' => $e->getMessage()
@@ -334,22 +349,23 @@ class AssignmentController extends Controller
     public function weeklyCalendar(Request $request): JsonResponse
     {
         try {
-            $startDate = $request->has('start_date') 
+            $startDate = $request->has('start_date')
                 ? Carbon::parse($request->input('start_date'))
                 : now()->startOfWeek();
+
             $endDate = $startDate->copy()->endOfWeek();
 
-            $sessions = \App\Models\Gym\AssignmentProgress::with([
+            $sessions = AssignmentProgress::with([
                 'templateAssignment.dailyTemplate',
                 'templateAssignment.professorStudentAssignment.student'
             ])
-            ->whereHas('templateAssignment.professorStudentAssignment', function($query) {
-                $query->where('professor_id', auth()->id());
-            })
-            ->whereBetween('scheduled_date', [$startDate, $endDate])
-            ->orderBy('scheduled_date')
-            ->get()
-            ->groupBy('scheduled_date');
+                ->whereHas('templateAssignment.professorStudentAssignment', function ($query) {
+                    $query->where('professor_id', auth()->id());
+                })
+                ->whereBetween('scheduled_date', [$startDate->toDateString(), $endDate->toDateString()])
+                ->orderBy('scheduled_date')
+                ->get()
+                ->groupBy('scheduled_date');
 
             return response()->json([
                 'start_date' => $startDate->toDateString(),
@@ -357,7 +373,7 @@ class AssignmentController extends Controller
                 'sessions_by_date' => $sessions
             ]);
 
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             return response()->json([
                 'message' => 'Error al obtener calendario semanal',
                 'error' => $e->getMessage()
@@ -374,6 +390,6 @@ class AssignmentController extends Controller
             'status' => $request->string('status')->toString() ?: null,
             'search' => $request->string('search')->toString() ?: null,
             'active_only' => $request->boolean('active_only') ?: null,
-        ]);
+        ], fn ($v) => $v !== null && $v !== '');
     }
 }
