@@ -8,7 +8,7 @@ use Illuminate\Http\JsonResponse;
 use Carbon\Carbon;
 
 class AssignmentController extends Controller
-
+{
     /**
      * Listar las asignaciones de plantillas de un alumno asignado a este profesor
      */
