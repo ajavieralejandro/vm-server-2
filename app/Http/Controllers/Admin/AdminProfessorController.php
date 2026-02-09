@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Models\User;
+use App\Models\SocioPadron;
 use App\Services\Admin\ProfessorManagementService;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
@@ -22,13 +23,13 @@ class AdminProfessorController extends Controller
     {
         try {
             $filters = $request->only([
-                'search', 'account_status', 'has_students', 
+                'search', 'account_status', 'has_students',
                 'sort_by', 'sort_direction'
             ]);
 
             // Implementación temporal simple para debugging
             $professors = \App\Models\User::where('is_professor', true)->get();
-            
+
             // Transformación básica sin stats complejos
             $professorsData = $professors->map(function ($professor) {
                 return [
@@ -58,14 +59,14 @@ class AdminProfessorController extends Controller
                     'avg_students_per_professor' => 0,
                 ],
             ]);
-            
+
         } catch (\Exception $e) {
             \Log::error('Error in AdminProfessorController@index', [
                 'error' => $e->getMessage(),
                 'file' => $e->getFile(),
                 'line' => $e->getLine()
             ]);
-            
+
             return response()->json([
                 'message' => 'Error retrieving professors',
                 'error' => app()->environment('local') ? $e->getMessage() : 'Internal server error'
@@ -136,8 +137,8 @@ class AdminProfessorController extends Controller
 
         try {
             $professor = $this->professorManagementService->assignProfessorRole(
-                $user, 
-                $validated, 
+                $user,
+                $validated,
                 $request->user()
             );
 
@@ -178,8 +179,8 @@ class AdminProfessorController extends Controller
 
         try {
             $professor = $this->professorManagementService->updateProfessor(
-                $professor, 
-                $validated, 
+                $professor,
+                $validated,
                 $request->user()
             );
 
@@ -206,8 +207,8 @@ class AdminProfessorController extends Controller
 
         try {
             $result = $this->professorManagementService->removeProfessorRole(
-                $professor, 
-                $validated, 
+                $professor,
+                $validated,
                 $request->user()
             );
 
@@ -218,7 +219,7 @@ class AdminProfessorController extends Controller
         } catch (\Exception $e) {
             return response()->json([
                 'message' => $e->getMessage(),
-                'active_assignments' => $e->getCode() === 422 ? 
+                'active_assignments' => $e->getCode() === 422 ?
                     \App\Models\Gym\WeeklyAssignment::where('created_by', $professor->id)
                         ->where('week_end', '>=', now())->count() : null,
             ], 422);
@@ -226,60 +227,100 @@ class AdminProfessorController extends Controller
     }
 
     /**
-                'message' => $e->getMessage()
-            ], 404);
-        }
-    }
-
-    /**
-     * Obtener estudiantes asignados a un profesor
+     * Obtener estudiantes (SOCIOS) asignables a un profesor
+     * ✅ Ahora usa socios_padron (SocioPadron) en vez de users.
      */
-    public function students(User $professor): JsonResponse
+    public function students(Request $request, User $professor): JsonResponse
     {
         try {
-            // Verificar que es profesor
             if (!$professor->is_professor) {
                 return response()->json([
                     'message' => 'User is not a professor.'
                 ], 404);
             }
-            
-            // Implementación simple: obtener usuarios que no son profesores ni admins
-            $students = \App\Models\User::where('is_professor', false)
-                ->where('is_admin', false)
-                ->select(['id', 'name', 'email', 'dni', 'account_status', 'created_at'])
-                ->get();
-            
-            // Simular asignación para testing
-            $studentsData = $students->map(function ($student) use ($professor) {
+
+            $perPage = (int) $request->input('per_page', 50);
+            $search  = trim((string) $request->input('search', $request->input('q', '')));
+
+            $query = SocioPadron::query()
+                ->select([
+                    'id',
+                    'dni',
+                    'sid',
+                    'apynom',
+                    'barcode',
+                    'saldo',
+                    'semaforo',
+                    'ult_impago',
+                    'acceso_full',
+                    'hab_controles',
+                    'updated_at',
+                ]);
+
+            if ($search !== '') {
+                $query->where(function ($w) use ($search) {
+                    $w->where('dni', 'like', "%{$search}%")
+                      ->orWhere('sid', 'like', "%{$search}%")
+                      ->orWhere('apynom', 'like', "%{$search}%");
+                });
+            }
+
+            // Filtros opcionales
+            if ($request->has('acceso_full')) {
+                $query->where('acceso_full', (int) $request->input('acceso_full'));
+            }
+            if ($request->has('hab_controles')) {
+                $query->where('hab_controles', (int) $request->input('hab_controles'));
+            }
+
+            $paginator = $query
+                ->orderBy('apynom')
+                ->paginate($perPage);
+
+            $studentsData = collect($paginator->items())->map(function (SocioPadron $s) use ($professor) {
                 return [
-                    'id' => $student->id,
-                    'name' => $student->name,
-                    'email' => $student->email,
-                    'dni' => $student->dni,
-                    'account_status' => $student->account_status ?? 'active',
-                    'assigned_date' => $student->created_at,
+                    // ⚠️ OJO: este id es de socios_padron, NO users.id
+                    'id' => $s->id,
+                    'name' => $s->apynom,
+                    'email' => null,
+                    'dni' => $s->dni,
+                    'account_status' => ($s->acceso_full ? 'active' : 'inactive'),
+                    'assigned_date' => $s->updated_at,
                     'professor_id' => $professor->id,
-                    'status' => 'active'
+                    'status' => 'available',
+
+                    // Extra útil para el frontend
+                    'sid' => $s->sid,
+                    'barcode' => $s->barcode,
+                    'saldo' => $s->saldo,
+                    'semaforo' => $s->semaforo,
+                    'ult_impago' => $s->ult_impago,
+                    'acceso_full' => (bool) $s->acceso_full,
+                    'hab_controles' => (int) $s->hab_controles,
                 ];
             });
-            
+
             return response()->json([
                 'students' => $studentsData,
-                'total' => $studentsData->count(),
+                'total' => $paginator->total(),
+                'pagination' => [
+                    'current_page' => $paginator->currentPage(),
+                    'last_page' => $paginator->lastPage(),
+                    'per_page' => $paginator->perPage(),
+                ],
                 'professor' => [
                     'id' => $professor->id,
                     'name' => $professor->name,
                     'email' => $professor->email
                 ]
             ]);
-            
+
         } catch (\Exception $e) {
             \Log::error('Error in AdminProfessorController@students', [
                 'error' => $e->getMessage(),
                 'professor_id' => $professor->id ?? 'unknown'
             ]);
-            
+
             return response()->json([
                 'message' => 'Error retrieving students',
                 'error' => app()->environment('local') ? $e->getMessage() : 'Internal server error'
@@ -289,6 +330,8 @@ class AdminProfessorController extends Controller
 
     /**
      * Reasignar estudiante a otro profesor
+     * (OJO: este método sigue usando users.id; si querés reasignar SOCIOS de padron,
+     * hay que adaptar el modelo/tablas de asignación.)
      */
     public function reassignStudent(Request $request, User $professor): JsonResponse
     {
