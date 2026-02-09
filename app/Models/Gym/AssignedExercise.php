@@ -32,6 +32,7 @@ class AssignedExercise extends Model
 
     public function sets(): HasMany
     {
-        return $this->hasMany(AssignedSet::class, 'assigned_exercise_id')->orderBy('set_number');
+        return $this->hasMany(AssignedSet::class, 'assigned_exercise_id')
+            ->orderBy('set_number');
     }
 }
