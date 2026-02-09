@@ -124,35 +124,114 @@ class AssignmentController extends Controller
     /**
      * Asignar plantilla a estudiante
      */
-    public function assignTemplate(Request $request): JsonResponse
-    {
-        try {
-            $validated = $request->validate([
-                'professor_student_assignment_id' => 'required|exists:professor_student_assignments,id',
-                'daily_template_id' => 'required|exists:gym_daily_templates,id',
-                'start_date' => 'required|date|after_or_equal:today',
-                'end_date' => 'nullable|date|after:start_date',
-                'frequency' => 'required|array|min:1',
-                'frequency.*' => 'integer|between:0,6', // 0=Domingo, 6=Sábado
-                'professor_notes' => 'nullable|string|max:1000'
-            ]);
+   /**
+ * Asignar plantilla a estudiante
+ */
+public function assignTemplate(Request $request): JsonResponse
+{
+    try {
+        // ✅ Validación BASE (sin exists directo, porque a veces viene socio_padron.id)
+        $validated = $request->validate([
+            'professor_student_assignment_id' => 'required|integer|min:1',
+            'daily_template_id' => 'required|exists:gym_daily_templates,id',
+            'start_date' => 'required|date|after_or_equal:today',
+            'end_date' => 'nullable|date|after:start_date',
+            'frequency' => 'required|array|min:1',
+            // ✅ Front manda 1..7 (Lunes=1 ... Domingo=7)
+            'frequency.*' => 'integer|between:1,7',
+            'professor_notes' => 'nullable|string|max:1000',
+        ]);
 
-            $validated['assigned_by'] = auth()->id();
+        // ✅ Resolver si me mandaron: (A) id real de professor_student_assignments
+        // o (B) socio_padron.id (student_id “fake”)
+        $resolvedAssignmentId = $this->resolveProfessorStudentAssignmentId(
+            (int) $validated['professor_student_assignment_id'],
+            (int) auth()->id()
+        );
 
-            $assignment = $this->assignmentService->assignTemplateToStudent($validated);
+        // Reescribo el payload con el ID REAL de professor_student_assignments.id
+        $validated['professor_student_assignment_id'] = $resolvedAssignmentId;
+        $validated['assigned_by'] = (int) auth()->id();
 
-            return response()->json([
-                'message' => 'Plantilla asignada exitosamente',
-                'data' => $assignment
-            ], 201);
+        // Si tu service guarda frecuencia 0..6, convertí acá:
+        // (Domingo 7 -> 0)
+        // $validated['frequency'] = array_map(fn($d) => ((int)$d) % 7, $validated['frequency']);
 
-        } catch (\Throwable $e) {
-            return response()->json([
-                'message' => 'Error al asignar plantilla',
-                'error' => $e->getMessage()
-            ], 422);
-        }
+        $assignment = $this->assignmentService->assignTemplateToStudent($validated);
+
+        return response()->json([
+            'message' => 'Plantilla asignada exitosamente',
+            'data' => $assignment
+        ], 201);
+
+    } catch (\Throwable $e) {
+        return response()->json([
+            'message' => 'Error al asignar plantilla',
+            'error' => $e->getMessage()
+        ], 422);
     }
+}
+
+/**
+ * ✅ Si el front manda el "id" que viene de myStudents() (socio_padron.id),
+ * este método lo convierte a un id REAL de professor_student_assignments.
+ *
+ * Acepta:
+ * - incomingId = professor_student_assignments.id (real)
+ * - incomingId = socio_padron.id (porque myStudents lo devuelve como id y student_id)
+ */
+private function resolveProfessorStudentAssignmentId(int $incomingId, int $professorId): int
+{
+    // Caso A) Vino un ID real de professor_student_assignments
+    $psa = ProfessorStudentAssignment::query()
+        ->where('id', $incomingId)
+        ->first();
+
+    if ($psa) {
+        // Seguridad: debe pertenecer al profesor autenticado
+        if ((int) $psa->professor_id !== $professorId) {
+            abort(403, 'La asignación no pertenece a este profesor');
+        }
+        return (int) $psa->id;
+    }
+
+    // Caso B) Vino socio_padron.id (student_id “fake”)
+    $studentId = $incomingId;
+
+    // (Opcional pero útil) validar que el socio esté asignado en professor_socio
+    $isAssigned = \DB::table('professor_socio')
+        ->where('professor_id', $professorId)
+        ->where('socio_id', $studentId)
+        ->exists();
+
+    if (!$isAssigned) {
+        abort(403, 'El socio no está asignado a este profesor');
+    }
+
+    // Crear/obtener el professor_student_assignment real para ese socio
+    $psa = ProfessorStudentAssignment::query()->firstOrCreate(
+        [
+            'professor_id' => $professorId,
+            'student_id'   => $studentId,
+        ],
+        [
+            'assigned_by'  => $professorId,
+            'status'       => 'active',
+            'start_date'   => now(),
+            'end_date'     => null,
+            'admin_notes'  => null,
+        ]
+    );
+
+    // Si estaba inactiva, reactivar (opcional)
+    if ($psa->status !== 'active') {
+        $psa->status = 'active';
+        $psa->end_date = null;
+        $psa->save();
+    }
+
+    return (int) $psa->id;
+}
 
     /**
      * Ver detalles de una asignación de plantilla
