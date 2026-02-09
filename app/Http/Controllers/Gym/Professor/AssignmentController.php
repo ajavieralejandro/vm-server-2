@@ -122,74 +122,59 @@ class AssignmentController extends Controller
             'error' => $e->getMessage()
         ], 500);
     }
-}public function studentTemplateAssignments(Request $request, int $studentId): JsonResponse
+}/**
+ * GET /api/professor/students/{socioPadronId}/template-assignments
+ * Devuelve plantillas del socio asignado al profesor (vía professor_socio),
+ * creando User + ProfessorStudentAssignment si hace falta.
+ */
+public function studentTemplateAssignments(int $socioPadronId, Request $request): JsonResponse
 {
     try {
-        $professorId = (int) auth()->id();
+        $professorId = auth()->id();
 
-        // 1) Interpretar studentId como users.id (ideal)
-        $user = User::find($studentId);
-
-        // 2) Si no existe, interpretarlo como socios_padron.id (tu caso actual)
-        if (!$user) {
-            $socio = SocioPadron::find($studentId);
-            if (!$socio) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Alumno no encontrado (ni user ni socio padron)'
-                ], 404);
-            }
-
-            // Opcional pero recomendado: validar que esté asignado en professor_socio
-            $isAssigned = DB::table('professor_socio')
-                ->where('professor_id', $professorId)
-                ->where('socio_id', (int) $socio->id)
-                ->exists();
-
-            if (!$isAssigned) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Alumno no asignado a este profesor'
-                ], 403);
-            }
-
-            // Crear/actualizar user espejo
-            $user = $this->ensureUserFromSocioPadron($socio);
-        }
-
-        // 3) Ahora sí: buscar/crear ProfessorStudentAssignment (FK a users)
-        $psa = ProfessorStudentAssignment::query()
+        // 1) Validar que el socio_padron esté asignado a este profesor
+        $isAssigned = DB::table('professor_socio')
             ->where('professor_id', $professorId)
-            ->where('student_id', (int) $user->id)
-            ->where('status', 'active')
-            ->first();
+            ->where('socio_id', $socioPadronId)
+            ->exists();
 
-        if (!$psa) {
-            $psa = ProfessorStudentAssignment::create([
-                'professor_id' => $professorId,
-                'student_id'   => (int) $user->id,
-                'assigned_by'  => $professorId,
-                'status'       => 'active',
-                'start_date'   => now(),
-                'end_date'     => null,
-                'admin_notes'  => null,
-            ]);
+        if (!$isAssigned) {
+            return response()->json([
+                'message' => 'Alumno no asignado a este profesor'
+            ], 403);
         }
 
-        // 4) Plantillas asignadas a esa relación
-        $assignments = TemplateAssignment::with(['dailyTemplate'])
-            ->where('professor_student_assignment_id', (int) $psa->id)
+        // 2) Traer socio_padron
+        $socio = SocioPadron::findOrFail($socioPadronId);
+
+        // 3) Resolver/crear user
+        $user = $this->ensureUserFromSocioPadron($socio);
+
+        // 4) Crear/obtener ProfessorStudentAssignment real (FK users.id)
+        $psa = ProfessorStudentAssignment::firstOrCreate(
+            [
+                'professor_id' => $professorId,
+                'student_id'   => $user->id,
+            ],
+            [
+                'assigned_by' => $professorId,
+                'status'      => 'active',
+                'start_date'  => now(),
+                'end_date'    => null,
+                'admin_notes' => null,
+            ]
+        );
+
+        // 5) Listar TemplateAssignments de ese PSA
+        $items = TemplateAssignment::with(['dailyTemplate'])
+            ->where('professor_student_assignment_id', $psa->id)
             ->orderByDesc('start_date')
             ->get();
 
-        return response()->json([
-            'success' => true,
-            'data' => $assignments,
-        ]);
+        return response()->json($items);
 
     } catch (\Throwable $e) {
         return response()->json([
-            'success' => false,
             'message' => 'Error al obtener plantillas del alumno',
             'error' => $e->getMessage(),
         ], 500);
@@ -261,71 +246,68 @@ class AssignmentController extends Controller
     return (int) $psa->id;
 }private function ensureUserFromSocioPadron(SocioPadron $socio): User
 {
-    $dniRaw = trim((string) $socio->dni);
-    $dniOk  = ($dniRaw !== '' && strtolower($dniRaw) !== 'dni');
+    $dni = trim((string) $socio->dni);
+    $name = trim((string) ($socio->apynom ?? 'Socio'));
 
-    // clave fallback
-    $barcodeKey = trim((string) ($socio->barcode ?? ''));
-    if ($barcodeKey === '') {
-        $barcodeKey = 'SID-' . (string)($socio->sid ?? $socio->id);
-    }
+    // ⚠️ user_type: NO pongas "socio" si tu Enum no lo soporta.
+    // Usá el valor válido de tu app. Ejemplos típicos: 'local' o 'api'.
+    $validUserType = 'local'; // <-- AJUSTÁ si tu enum usa otro backing value
+
+    // password = dni (si no hay dni válido, generamos uno)
+    $plainPassword = ($dni !== '' && strtolower($dni) !== 'dni') ? $dni : ('SOCIO-' . (string)$socio->id);
 
     $defaults = [
-        // ✅ importante: usar un valor válido de tu Enum (ej: local/api)
-        'user_type' => 'local',
-
+        'user_type' => $validUserType,
         'is_admin' => 0,
         'is_professor' => 0,
         'account_status' => 'active',
-
-        'name' => trim((string) ($socio->apynom ?? 'Socio')),
+        'name' => $name !== '' ? $name : 'Socio',
         'email' => null,
+        'password' => Hash::make($plainPassword),
 
         'socio_id' => $socio->sid ? (string)$socio->sid : null,
         'socio_n'  => $socio->sid ? (string)$socio->sid : null,
-
-        'barcode'  => $barcodeKey,
+        'barcode'  => $socio->barcode,
         'saldo'    => $socio->saldo ?? '0.00',
         'semaforo' => $socio->semaforo ?? 1,
         'estado_socio' => null,
         'avatar_path' => null,
         'foto_url' => null,
-
-        // ✅ password requerido: DNI como password (hasheado)
-        'password' => bcrypt($dniOk ? $dniRaw : ('SOCIO-' . (string)$socio->id)),
     ];
 
-    // Buscar existente por dni si es válido, si no por barcode
-    if ($dniOk) {
-        $user = User::query()->where('dni', $dniRaw)->first();
-        if (!$user) {
-            $user = User::create(array_merge($defaults, ['dni' => $dniRaw]));
+    // DNI inválido / basura -> resolvemos por barcode o por socio_id
+    if ($dni === '' || strtolower($dni) === 'dni') {
+        $keyBarcode = $socio->barcode ?: null;
+
+        $user = null;
+        if ($keyBarcode) {
+            $user = User::query()->where('barcode', $keyBarcode)->first();
+        }
+
+        if (!$user && $socio->sid) {
+            $user = User::query()->where('socio_id', (string)$socio->sid)->first();
+        }
+
+        if ($user) {
+            $user->fill($defaults);
+            $user->save();
             return $user;
         }
 
-        $user->fill($defaults);
-        $user->dni = $dniRaw;
-        $user->save();
-        return $user;
+        // Creamos un dni sintético para cumplir constraints si hace falta
+        $defaults['dni'] = 'SOCIO-' . (string)$socio->id;
+        return User::create($defaults);
     }
 
-    // DNI inválido -> por barcode
-    $user = User::query()->where('barcode', $barcodeKey)->first();
-    if (!$user) {
-        $user = User::create(array_merge($defaults, ['dni' => 'SOCIO-' . (string)$socio->id]));
-        return $user;
-    }
-
+    // Caso normal: match por dni
+    $user = User::firstOrCreate(['dni' => $dni], array_merge($defaults, ['dni' => $dni]));
     $user->fill($defaults);
-    $user->barcode = $barcodeKey;
+    $user->dni = $dni;
     $user->save();
+
     return $user;
 }
 
-
-    /**
-     * Actualizar asignación de plantilla
-     */
     public function updateAssignment(Request $request, $assignmentId): JsonResponse
     {
         try {
