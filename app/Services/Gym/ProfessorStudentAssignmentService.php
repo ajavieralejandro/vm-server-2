@@ -11,12 +11,14 @@ class ProfessorStudentAssignmentService
     {
         return ProfessorStudentAssignment::with(['student', 'professor'])
             ->where('professor_id', $professorId)
+            ->orderBy('id')
             ->get();
     }
 
     /**
      * REPLACE:
-     * Deja EXACTAMENTE los studentIds. Lo que no está => se marca inactive (no delete duro).
+     * Deja EXACTAMENTE los studentIds activos.
+     * Los que no están => status=inactive (soft-remove).
      */
     public function syncProfessorStudents(int $professorId, array $studentIds, ?int $assignedBy): array
     {
@@ -25,14 +27,17 @@ class ProfessorStudentAssignmentService
         return DB::transaction(function () use ($professorId, $studentIds, $assignedBy) {
             $now = now();
 
-            $existing = ProfessorStudentAssignment::query()
+            // Traigo TODOS los existentes (activos e inactivos) para evitar N+1
+            $existingRows = ProfessorStudentAssignment::query()
                 ->where('professor_id', $professorId)
-                ->pluck('student_id')
-                ->map(fn ($id) => (int) $id)
-                ->toArray();
+                ->get()
+                ->keyBy(fn ($row) => (int) $row->student_id);
 
-            $toAdd = array_values(array_diff($studentIds, $existing));
-            $toRemove = array_values(array_diff($existing, $studentIds));
+            $existingIds = $existingRows->keys()->map(fn ($v) => (int) $v)->toArray();
+
+            $toAddOrReactivate = array_values(array_diff($studentIds, $existingIds));
+            $toMaybeReactivate = array_values(array_intersect($studentIds, $existingIds));
+            $toRemove = array_values(array_diff($existingIds, $studentIds));
 
             // Soft-remove (no borrar)
             $removedCount = 0;
@@ -40,6 +45,7 @@ class ProfessorStudentAssignmentService
                 $removedCount = ProfessorStudentAssignment::query()
                     ->where('professor_id', $professorId)
                     ->whereIn('student_id', $toRemove)
+                    ->where('status', '!=', 'inactive')
                     ->update([
                         'status' => 'inactive',
                         'end_date' => $now,
@@ -47,48 +53,47 @@ class ProfessorStudentAssignmentService
                     ]);
             }
 
-            // Add/reactivate
             $assignedCount = 0;
-            foreach ($toAdd as $studentId) {
-                $assignment = ProfessorStudentAssignment::query()
-                    ->where('professor_id', $professorId)
-                    ->where('student_id', $studentId)
-                    ->first();
 
-                if ($assignment) {
-                    // Reactivar si estaba inactivo
-                    if ($assignment->status !== 'active') {
-                        $assignment->update([
-                            'status' => 'active',
-                            'start_date' => $assignment->start_date ?? $now,
-                            'end_date' => null,
-                            'assigned_by' => $assignment->assigned_by ?? $assignedBy,
-                        ]);
-                        $assignedCount++;
-                    }
-                    continue;
+            // Reactivar los que ya existían pero estaban inactive
+            foreach ($toMaybeReactivate as $studentId) {
+                $row = $existingRows[(int)$studentId] ?? null;
+                if ($row && $row->status !== 'active') {
+                    $row->update([
+                        'status' => 'active',
+                        'end_date' => null,
+                        'start_date' => $row->start_date ?? $now,
+                        'assigned_by' => $row->assigned_by ?? $assignedBy,
+                    ]);
+                    $assignedCount++;
                 }
-
-                ProfessorStudentAssignment::create([
-                    'professor_id' => $professorId,
-                    'student_id' => $studentId,
-                    'assigned_by' => $assignedBy,
-                    'start_date' => $now,
-                    'end_date' => null,
-                    'status' => 'active',
-                ]);
-                $assignedCount++;
             }
 
-            $data = ProfessorStudentAssignment::with(['student', 'professor'])
-                ->where('professor_id', $professorId)
-                ->orderBy('id')
-                ->get();
+            // Crear los que no existen
+            if (!empty($toAddOrReactivate)) {
+                $insert = [];
+                foreach ($toAddOrReactivate as $studentId) {
+                    $insert[] = [
+                        'professor_id' => $professorId,
+                        'student_id' => (int) $studentId,
+                        'assigned_by' => $assignedBy,
+                        'start_date' => $now,
+                        'end_date' => null,
+                        'status' => 'active',
+                        'created_at' => $now,
+                        'updated_at' => $now,
+                    ];
+                    $assignedCount++;
+                }
+                ProfessorStudentAssignment::query()->insert($insert);
+            }
+
+            $data = $this->listByProfessor($professorId);
 
             return [
                 'ok' => true,
                 'mode' => 'replace',
-                'professor_id' => $professorId,
+                'professor_id' => (int) $professorId,
                 'assigned_count' => (int) $assignedCount,
                 'removed_count' => (int) $removedCount,
                 'data' => $data,
@@ -98,8 +103,7 @@ class ProfessorStudentAssignmentService
 
     /**
      * MERGE / ATTACH:
-     * Agrega studentIds sin borrar los existentes.
-     * Ideal para auto-asignación del profesor (uno por vez) y para "professor_socio" espejo.
+     * Agrega studentIds sin borrar existentes.
      */
     public function attachProfessorStudents(int $professorId, array $studentIds, ?int $assignedBy): array
     {
@@ -108,47 +112,66 @@ class ProfessorStudentAssignmentService
         return DB::transaction(function () use ($professorId, $studentIds, $assignedBy) {
             $now = now();
 
+            if (empty($studentIds)) {
+                return [
+                    'ok' => true,
+                    'mode' => 'merge',
+                    'professor_id' => (int) $professorId,
+                    'assigned_count' => 0,
+                    'removed_count' => 0,
+                    'data' => $this->listByProfessor($professorId),
+                ];
+            }
+
+            $existingRows = ProfessorStudentAssignment::query()
+                ->where('professor_id', $professorId)
+                ->whereIn('student_id', $studentIds)
+                ->get()
+                ->keyBy(fn ($row) => (int) $row->student_id);
+
             $assignedCount = 0;
+            $insert = [];
 
             foreach ($studentIds as $studentId) {
-                $assignment = ProfessorStudentAssignment::query()
-                    ->where('professor_id', $professorId)
-                    ->where('student_id', $studentId)
-                    ->first();
+                $studentId = (int) $studentId;
+                $row = $existingRows[$studentId] ?? null;
 
-                if ($assignment) {
-                    if ($assignment->status !== 'active') {
-                        $assignment->update([
+                if ($row) {
+                    if ($row->status !== 'active') {
+                        $row->update([
                             'status' => 'active',
                             'end_date' => null,
-                            'assigned_by' => $assignment->assigned_by ?? $assignedBy,
-                            'start_date' => $assignment->start_date ?? $now,
+                            'start_date' => $row->start_date ?? $now,
+                            'assigned_by' => $row->assigned_by ?? $assignedBy,
                         ]);
                         $assignedCount++;
                     }
                     continue;
                 }
 
-                ProfessorStudentAssignment::create([
+                $insert[] = [
                     'professor_id' => $professorId,
                     'student_id' => $studentId,
                     'assigned_by' => $assignedBy,
                     'start_date' => $now,
                     'end_date' => null,
                     'status' => 'active',
-                ]);
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ];
                 $assignedCount++;
             }
 
-            $data = ProfessorStudentAssignment::with(['student', 'professor'])
-                ->where('professor_id', $professorId)
-                ->orderBy('id')
-                ->get();
+            if (!empty($insert)) {
+                ProfessorStudentAssignment::query()->insert($insert);
+            }
+
+            $data = $this->listByProfessor($professorId);
 
             return [
                 'ok' => true,
                 'mode' => 'merge',
-                'professor_id' => $professorId,
+                'professor_id' => (int) $professorId,
                 'assigned_count' => (int) $assignedCount,
                 'removed_count' => 0,
                 'data' => $data,
@@ -158,7 +181,7 @@ class ProfessorStudentAssignmentService
 
     /**
      * DETACH:
-     * Marca inactive a esos studentIds.
+     * Marca inactive a esos studentIds (soft).
      */
     public function detachProfessorStudents(int $professorId, array $studentIds): array
     {
@@ -172,6 +195,7 @@ class ProfessorStudentAssignmentService
                 $removedCount = ProfessorStudentAssignment::query()
                     ->where('professor_id', $professorId)
                     ->whereIn('student_id', $studentIds)
+                    ->where('status', '!=', 'inactive')
                     ->update([
                         'status' => 'inactive',
                         'end_date' => $now,
@@ -179,15 +203,12 @@ class ProfessorStudentAssignmentService
                     ]);
             }
 
-            $data = ProfessorStudentAssignment::with(['student', 'professor'])
-                ->where('professor_id', $professorId)
-                ->orderBy('id')
-                ->get();
+            $data = $this->listByProfessor($professorId);
 
             return [
                 'ok' => true,
                 'mode' => 'detach',
-                'professor_id' => $professorId,
+                'professor_id' => (int) $professorId,
                 'assigned_count' => 0,
                 'removed_count' => (int) $removedCount,
                 'data' => $data,
