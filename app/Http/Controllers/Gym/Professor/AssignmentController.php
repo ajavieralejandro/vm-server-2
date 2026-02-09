@@ -7,6 +7,9 @@ use App\Services\Gym\AssignmentService;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Carbon\Carbon;
+use Illuminate\Support\Facades\Hash;
+
+use Illuminate\Support\Str;
 
 // Models
 use App\Models\User;
@@ -235,20 +238,26 @@ public function assignTemplate(Request $request): JsonResponse
 
     return (int) $psa->id;
 }
-
 private function ensureUserFromSocioPadron(SocioPadron $socio): User
 {
-    $dni = trim((string) $socio->dni);
+    // Normalizamos DNI: solo dígitos
+    $dniRaw = (string) ($socio->dni ?? '');
+    $dni = preg_replace('/\D+/', '', trim($dniRaw));
+
+    $name = trim((string) ($socio->apynom ?? 'Socio'));
+    $sid  = $socio->sid ? (string) $socio->sid : null;
 
     $defaults = [
         // ⚠️ NO seteamos user_type porque es Enum y "socio" no existe
         'is_admin' => 0,
         'is_professor' => 0,
         'account_status' => 'active',
-        'name' => trim((string) ($socio->apynom ?? 'Socio')),
+        'name' => $name !== '' ? $name : 'Socio',
         'email' => null,
-        'socio_id' => $socio->sid ? (string)$socio->sid : null,
-        'socio_n'  => $socio->sid ? (string)$socio->sid : null,
+
+        'socio_id' => $sid,
+        'socio_n'  => $sid,
+
         'barcode'  => $socio->barcode,
         'saldo'    => $socio->saldo ?? '0.00',
         'semaforo' => $socio->semaforo ?? 1,
@@ -258,29 +267,45 @@ private function ensureUserFromSocioPadron(SocioPadron $socio): User
     ];
 
     // DNI inválido / basura -> fallback
-    if ($dni === '' || strtolower($dni) === 'dni') {
+    if ($dni === '' || strtolower(trim($dniRaw)) === 'dni') {
         $key = $socio->barcode ?: ('SID-' . (string)($socio->sid ?? $socio->id));
+
         $user = User::query()->where('barcode', $key)->first();
 
         if ($user) {
+            // ✅ NO tocar password si ya existe
             $user->fill($defaults);
             $user->barcode = $key;
             $user->save();
             return $user;
         }
 
-        $defaults['dni'] = 'SOCIO-' . (string) $socio->id;
+        // Creamos un dni sintético único
+        $syntheticDni = 'SOCIO-' . (string) $socio->id;
+
+        // ✅ password = dni (en este caso sintético) hasheado
+        $defaults['dni'] = $syntheticDni;
         $defaults['barcode'] = $key;
+        $defaults['password'] = Hash::make($syntheticDni);
 
         return User::create($defaults);
     }
 
     // Caso normal: match por dni
-    $user = User::firstOrCreate(
-        ['dni' => $dni],
-        array_merge($defaults, ['dni' => $dni])
-    );
+    $user = User::query()->where('dni', $dni)->first();
 
+    if (!$user) {
+        // ✅ Crear: password = dni hasheado
+        $create = array_merge($defaults, [
+            'dni' => $dni,
+            'password' => Hash::make($dni),
+        ]);
+
+        $user = User::create($create);
+        return $user;
+    }
+
+    // Existe: actualizar datos, ✅ NO pisar password
     $user->fill($defaults);
     $user->dni = $dni;
     $user->save();
@@ -288,36 +313,6 @@ private function ensureUserFromSocioPadron(SocioPadron $socio): User
     return $user;
 }
 
-
-    /**
-     * Ver detalles de una asignación de plantilla
-     */
-    public function show($assignmentId): JsonResponse
-    {
-        try {
-            $assignment = TemplateAssignment::with([
-                'dailyTemplate.exercises.exercise',
-                'dailyTemplate.exercises.sets',
-                'professorStudentAssignment.student',
-                'progress' => function ($query) {
-                    $query->orderBy('scheduled_date');
-                }
-            ])->findOrFail($assignmentId);
-
-            if ($assignment->professorStudentAssignment->professor_id !== auth()->id()) {
-                return response()->json([
-                    'message' => 'No tienes permisos para ver esta asignación'
-                ], 403);
-            }
-
-            return response()->json($assignment);
-        } catch (\Throwable $e) {
-            return response()->json([
-                'message' => 'Asignación no encontrada',
-                'error' => $e->getMessage()
-            ], 404);
-        }
-    }
 
     /**
      * Actualizar asignación de plantilla
