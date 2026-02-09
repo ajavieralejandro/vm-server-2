@@ -157,6 +157,16 @@ class User extends Authenticatable
                     });
     }
 
+     public function sociosPadronAsignados()
+    {
+        return $this->belongsToMany(
+            SocioPadron::class,
+            'professor_socio',
+            'professor_id',
+            'socio_id'
+        )->withPivot(['assigned_by'])->withTimestamps();
+    }
+
     /**
      * Scope para usuarios con datos completos
      */
