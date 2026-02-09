@@ -6,16 +6,17 @@ use App\Http\Controllers\Controller;
 use App\Services\Gym\AssignmentService;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Pagination\LengthAwarePaginator;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Hash;
 use Carbon\Carbon;
 
 // Models
 use App\Models\User;
 use App\Models\SocioPadron;
-use Illuminate\Pagination\LengthAwarePaginator;
 use App\Models\Gym\ProfessorStudentAssignment;
 use App\Models\Gym\TemplateAssignment;
 use App\Models\Gym\AssignmentProgress;
-
 
 class AssignmentController extends Controller
 {
@@ -24,130 +25,146 @@ class AssignmentController extends Controller
     ) {}
 
     /**
-     * Obtener mis estudiantes asignados
+     * Obtener mis estudiantes asignados (desde professor_socio + socios_padron)
      */
-   public function myStudents(Request $request): JsonResponse
-{
-    try {
-        $perPage = (int) $request->query('per_page', 20);
-        $perPage = max(1, min(200, $perPage));
-        $page    = (int) $request->query('page', 1);
-        $search  = trim((string) $request->query('search', $request->query('q', '')));
+    public function myStudents(Request $request): JsonResponse
+    {
+        try {
+            $perPage = (int) $request->query('per_page', 20);
+            $perPage = max(1, min(200, $perPage));
+            $page    = (int) $request->query('page', 1);
+            $search  = trim((string) $request->query('search', $request->query('q', '')));
 
-        // SOCIOS asignados (professor_socio + socios_padron)
-        $baseQuery = SocioPadron::query()
-            ->join('professor_socio', 'professor_socio.socio_id', '=', 'socios_padron.id')
-            ->where('professor_socio.professor_id', auth()->id())
-            ->select([
-                'socios_padron.id',
-                'socios_padron.dni',
-                'socios_padron.sid',
-                'socios_padron.apynom',
-                'socios_padron.barcode',
-                'socios_padron.saldo',
-                'socios_padron.semaforo',
-                'socios_padron.hab_controles',
-            ])
-            ->orderBy('socios_padron.apynom')
-            ->orderBy('socios_padron.dni');
+            $professorId = (int) auth()->id();
 
-        if ($search !== '') {
-            $baseQuery->where(function ($w) use ($search) {
-                $w->where('socios_padron.dni', 'like', "%{$search}%")
-                  ->orWhere('socios_padron.sid', 'like', "%{$search}%")
-                  ->orWhere('socios_padron.apynom', 'like', "%{$search}%");
-            });
-        }
+            $baseQuery = SocioPadron::query()
+                ->join('professor_socio', 'professor_socio.socio_id', '=', 'socios_padron.id')
+                ->where('professor_socio.professor_id', $professorId)
+                ->select([
+                    'socios_padron.id',
+                    'socios_padron.dni',
+                    'socios_padron.sid',
+                    'socios_padron.apynom',
+                    'socios_padron.barcode',
+                    'socios_padron.saldo',
+                    'socios_padron.semaforo',
+                    'socios_padron.hab_controles',
+                ])
+                ->orderBy('socios_padron.apynom')
+                ->orderBy('socios_padron.dni');
 
-        $paginator = $baseQuery->paginate($perPage, ['*'], 'page', $page);
+            if ($search !== '') {
+                $baseQuery->where(function ($w) use ($search) {
+                    $w->where('socios_padron.dni', 'like', "%{$search}%")
+                      ->orWhere('socios_padron.sid', 'like', "%{$search}%")
+                      ->orWhere('socios_padron.apynom', 'like', "%{$search}%");
+                });
+            }
 
-        // Convertimos cada socio a "assignment" con estructura compatible:
-        $data = $paginator->getCollection()->map(function ($socio) {
-            return [
-                'id' => (int) $socio->id, // id del socio_padron (pseudo id assignment)
-                'professor_id' => (int) auth()->id(),
-                'student_id' => (int) $socio->id, // pseudo
-                'status' => 'active',
-                'start_date' => null,
-                'end_date' => null,
-                'admin_notes' => null,
-                'created_at' => null,
-                'updated_at' => null,
+            $paginator = $baseQuery->paginate($perPage, ['*'], 'page', $page);
 
-                // el front usa assignment.student.xxx -> armamos un "student" compatible
-                'student' => [
+            $data = $paginator->getCollection()->map(function ($socio) use ($professorId) {
+                return [
+                    // ⚠️ id pseudo: socio_padron.id (el front lo usa como "assignment id")
                     'id' => (int) $socio->id,
-                    'dni' => $socio->dni,
-                    'name' => (string) ($socio->apynom ?? ''),
-                    'email' => null,
-                    'user_type' => 'socio',
-                    'type_label' => 'Socio',
-                    'socio_id' => (string) ($socio->sid ?? null),
-                    'socio_n' => (string) ($socio->sid ?? null),
-                    'barcode' => $socio->barcode,
-                    'saldo' => $socio->saldo,
-                    'semaforo' => $socio->semaforo,
-                    'hab_controles' => $socio->hab_controles,
-                    'foto_url' => null,
-                    'avatar_path' => null,
-                ],
+                    'professor_id' => $professorId,
+                    'student_id' => (int) $socio->id, // pseudo
+                    'status' => 'active',
+                    'start_date' => null,
+                    'end_date' => null,
+                    'admin_notes' => null,
+                    'created_at' => null,
+                    'updated_at' => null,
 
-                // para que no rompa si espera template_assignments
-                'template_assignments' => [],
-            ];
-        })->values();
+                    'student' => [
+                        'id' => (int) $socio->id, // socio_padron.id
+                        'dni' => $socio->dni,
+                        'name' => (string) ($socio->apynom ?? ''),
+                        'email' => null,
+                        'user_type' => 'socio',
+                        'type_label' => 'Socio',
+                        'socio_id' => (string) ($socio->sid ?? null),
+                        'socio_n' => (string) ($socio->sid ?? null),
+                        'barcode' => $socio->barcode,
+                        'saldo' => $socio->saldo,
+                        'semaforo' => $socio->semaforo,
+                        'hab_controles' => $socio->hab_controles,
+                        'foto_url' => null,
+                        'avatar_path' => null,
+                    ],
 
-        // Devolvemos paginator "clásico" igual que Laravel
-        $out = new LengthAwarePaginator(
-            $data,
-            $paginator->total(),
-            $paginator->perPage(),
-            $paginator->currentPage(),
-            [
-                'path' => $request->url(),
-                'query' => $request->query(),
-            ]
-        );
+                    'template_assignments' => [],
+                ];
+            })->values();
 
-        return response()->json($out);
+            $out = new LengthAwarePaginator(
+                $data,
+                $paginator->total(),
+                $paginator->perPage(),
+                $paginator->currentPage(),
+                [
+                    'path' => $request->url(),
+                    'query' => $request->query(),
+                ]
+            );
 
-    } catch (\Throwable $e) {
-        return response()->json([
-            'message' => 'Error al obtener estudiantes',
-            'error' => $e->getMessage()
-        ], 500);
+            return response()->json($out);
+
+        } catch (\Throwable $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al obtener estudiantes',
+                'error' => $e->getMessage()
+            ], 500);
+        }
     }
-}
-
-
 
     /**
      * Asignar plantilla a estudiante
+     *
+     * El front puede mandar professor_student_assignment_id como:
+     * - ID real de professor_student_assignments
+     * - socio_padron.id (pseudo, viene de myStudents)
+     *
+     * ✅ Acá lo resolvemos a PSA real SIEMPRE antes de llamar al service.
      */
     public function assignTemplate(Request $request): JsonResponse
     {
         try {
-          $validated = $request->validate([
-  'professor_student_assignment_id' => 'required|integer|min:1', // 👈 NO exists acá
-  'daily_template_id' => 'required|integer|min:1',
-  'start_date' => 'nullable|date',
-  'end_date' => 'nullable|date|after_or_equal:start_date',
-  'frequency' => 'nullable|array|min:1',
-  'frequency.*' => 'integer|between:0,6',
-  'professor_notes' => 'nullable|string|max:1000',
-]);
+            $professorId = (int) auth()->id();
 
-            $validated['assigned_by'] = auth()->id();
+            $validated = $request->validate([
+                // ⚠️ NO uses exists acá, porque puede venir socio_padron.id
+                'professor_student_assignment_id' => 'required|integer|min:1',
+                'daily_template_id' => 'required|integer|min:1',
+                'start_date' => 'nullable|date',
+                'end_date' => 'nullable|date|after_or_equal:start_date',
+                'frequency' => 'nullable|array|min:1',
+                'frequency.*' => 'integer|between:0,6',
+                'professor_notes' => 'nullable|string|max:1000',
+            ]);
 
-            $assignment = $this->assignmentService->assignTemplateToStudent($validated);
+            // ✅ Convertir incoming (PSA real o socio_padron.id) -> PSA real
+            $incoming = (int) $validated['professor_student_assignment_id'];
+            $psaId = $this->resolveProfessorStudentAssignmentId($incoming, $professorId);
+
+            // ✅ Payload final para el service (siempre consistente)
+            $payload = $validated;
+            $payload['professor_student_assignment_id'] = $psaId;   // ✅ ahora sí existe
+            $payload['assigned_by'] = $professorId;                 // ✅ fix assigned_by NOT NULL
+
+            // Llamar al service ya con PSA real
+            $assignment = $this->assignmentService->assignTemplateToStudent($payload);
 
             return response()->json([
+                'success' => true,
                 'message' => 'Plantilla asignada exitosamente',
                 'data' => $assignment
             ], 201);
 
         } catch (\Throwable $e) {
             return response()->json([
+                'success' => false,
                 'message' => 'Error al asignar plantilla',
                 'error' => $e->getMessage()
             ], 422);
@@ -155,8 +172,137 @@ class AssignmentController extends Controller
     }
 
     /**
-     * Ver detalles de una asignación de plantilla
+     * ✅ Resuelve un ID entrante (PSA real o socio_padron.id) al PSA real.
      */
+    private function resolveProfessorStudentAssignmentId(int $incomingId, int $professorId): int
+    {
+        // Caso A) Vino un ID real de professor_student_assignments
+        $psa = ProfessorStudentAssignment::query()
+            ->where('id', $incomingId)
+            ->first();
+
+        if ($psa) {
+            if ((int) $psa->professor_id !== $professorId) {
+                abort(403, 'La asignación no pertenece a este profesor');
+            }
+            return (int) $psa->id;
+        }
+
+        // Caso B) Vino socio_padron.id
+        $socioPadronId = $incomingId;
+
+        // Validar que el socio esté asignado a este profesor (pivot)
+        $isAssigned = DB::table('professor_socio')
+            ->where('professor_id', $professorId)
+            ->where('socio_id', $socioPadronId)
+            ->exists();
+
+        if (!$isAssigned) {
+            abort(403, 'El socio no está asignado a este profesor');
+        }
+
+        $socio = SocioPadron::query()->findOrFail($socioPadronId);
+
+        // Crear/obtener user espejo (users.id real)
+        $userSocio = $this->ensureUserFromSocioPadron($socio);
+
+        // Crear/obtener PSA real usando users.id
+        $psa = ProfessorStudentAssignment::query()->firstOrCreate(
+            [
+                'professor_id' => $professorId,
+                'student_id'   => (int) $userSocio->id,
+            ],
+            [
+                'assigned_by'  => $professorId,
+                'status'       => 'active',
+                'start_date'   => now(),
+                'end_date'     => null,
+                'admin_notes'  => null,
+            ]
+        );
+
+        if ($psa->status !== 'active') {
+            $psa->status = 'active';
+            $psa->end_date = null;
+            $psa->save();
+        }
+
+        return (int) $psa->id;
+    }
+
+    /**
+     * Crea/actualiza un User espejo a partir de SocioPadron.
+     * No pisa password si el user ya existe.
+     */
+    private function ensureUserFromSocioPadron(SocioPadron $socio): User
+    {
+        $dniRaw = (string) ($socio->dni ?? '');
+        $dni = preg_replace('/\D+/', '', trim($dniRaw));
+
+        $name = trim((string) ($socio->apynom ?? 'Socio'));
+        $sid  = $socio->sid ? (string) $socio->sid : null;
+
+        $defaults = [
+            'is_admin' => 0,
+            'is_professor' => 0,
+            'account_status' => 'active',
+            'name' => $name !== '' ? $name : 'Socio',
+            'email' => null,
+            'socio_id' => $sid,
+            'socio_n'  => $sid,
+            'barcode'  => $socio->barcode,
+            'saldo'    => $socio->saldo ?? '0.00',
+            'semaforo' => $socio->semaforo ?? 1,
+            'estado_socio' => null,
+            'avatar_path' => null,
+            'foto_url' => null,
+        ];
+
+        // DNI inválido -> fallback por barcode / SID / id
+        if ($dni === '' || strtolower(trim($dniRaw)) === 'dni') {
+            $key = $socio->barcode ?: ('SID-' . (string)($socio->sid ?? $socio->id));
+
+            $user = User::query()->where('barcode', $key)->first();
+
+            if ($user) {
+                $user->fill($defaults);
+                $user->barcode = $key;
+                $user->save();
+                return $user;
+            }
+
+            $syntheticDni = 'SOCIO-' . (string) $socio->id;
+
+            $create = $defaults;
+            $create['dni'] = $syntheticDni;
+            $create['barcode'] = $key;
+            $create['password'] = Hash::make($syntheticDni);
+
+            return User::create($create);
+        }
+
+        // Caso normal: match por dni
+        $user = User::query()->where('dni', $dni)->first();
+
+        if (!$user) {
+            $create = array_merge($defaults, [
+                'dni' => $dni,
+                'password' => Hash::make($dni),
+            ]);
+
+            return User::create($create);
+        }
+
+        // Existe: actualizar datos sin pisar password
+        $user->fill($defaults);
+        $user->dni = $dni;
+        $user->save();
+
+        return $user;
+    }
+
+    // ======= TODO lo que sigue lo dejé como lo tenías (sin tocar lógica) =======
+
     public function show($assignmentId): JsonResponse
     {
         try {
@@ -170,12 +316,11 @@ class AssignmentController extends Controller
             ])->findOrFail($assignmentId);
 
             if ($assignment->professorStudentAssignment->professor_id !== auth()->id()) {
-                return response()->json([
-                    'message' => 'No tienes permisos para ver esta asignación'
-                ], 403);
+                return response()->json(['message' => 'No tienes permisos para ver esta asignación'], 403);
             }
 
             return response()->json($assignment);
+
         } catch (\Throwable $e) {
             return response()->json([
                 'message' => 'Asignación no encontrada',
@@ -184,9 +329,6 @@ class AssignmentController extends Controller
         }
     }
 
-    /**
-     * Actualizar asignación de plantilla
-     */
     public function updateAssignment(Request $request, $assignmentId): JsonResponse
     {
         try {
@@ -201,9 +343,7 @@ class AssignmentController extends Controller
             $assignment = TemplateAssignment::findOrFail($assignmentId);
 
             if ($assignment->professorStudentAssignment->professor_id !== auth()->id()) {
-                return response()->json([
-                    'message' => 'No tienes permisos para modificar esta asignación'
-                ], 403);
+                return response()->json(['message' => 'No tienes permisos para modificar esta asignación'], 403);
             }
 
             $assignment->update($validated);
@@ -221,9 +361,6 @@ class AssignmentController extends Controller
         }
     }
 
-    /**
-     * Desasignar/Eliminar plantilla de estudiante
-     */
     public function unassignTemplate($assignmentId): JsonResponse
     {
         try {
@@ -231,9 +368,7 @@ class AssignmentController extends Controller
                 ->findOrFail($assignmentId);
 
             if ($assignment->professorStudentAssignment->professor_id !== auth()->id()) {
-                return response()->json([
-                    'message' => 'No tienes permisos para eliminar esta asignación'
-                ], 403);
+                return response()->json(['message' => 'No tienes permisos para eliminar esta asignación'], 403);
             }
 
             $studentName = $assignment->professorStudentAssignment->student->name ?? 'Alumno';
@@ -255,9 +390,6 @@ class AssignmentController extends Controller
         }
     }
 
-    /**
-     * Agregar feedback a una sesión completada
-     */
     public function addFeedback(Request $request, $progressId): JsonResponse
     {
         try {
@@ -285,9 +417,6 @@ class AssignmentController extends Controller
         }
     }
 
-    /**
-     * Obtener progreso de un estudiante específico
-     */
     public function studentProgress($studentId, Request $request): JsonResponse
     {
         try {
@@ -298,9 +427,7 @@ class AssignmentController extends Controller
                 ->first();
 
             if (!$assignment) {
-                return response()->json([
-                    'message' => 'Estudiante no asignado o inactivo'
-                ], 403);
+                return response()->json(['message' => 'Estudiante no asignado o inactivo'], 403);
             }
 
             $assignments = $this->assignmentService->getStudentTemplateAssignments(
@@ -318,9 +445,6 @@ class AssignmentController extends Controller
         }
     }
 
-    /**
-     * Obtener estadísticas del profesor
-     */
     public function myStats(): JsonResponse
     {
         try {
@@ -334,9 +458,6 @@ class AssignmentController extends Controller
         }
     }
 
-    /**
-     * Obtener sesiones pendientes de hoy
-     */
     public function todaySessions(): JsonResponse
     {
         try {
@@ -369,9 +490,6 @@ class AssignmentController extends Controller
         }
     }
 
-    /**
-     * Obtener calendario semanal
-     */
     public function weeklyCalendar(Request $request): JsonResponse
     {
         try {
@@ -407,9 +525,6 @@ class AssignmentController extends Controller
         }
     }
 
-    /**
-     * Construir filtros desde request
-     */
     private function buildFilters(Request $request): array
     {
         return array_filter([
