@@ -213,50 +213,53 @@ class AssignmentController extends Controller
      * - frequency (opcional array [0..6])
      * - professor_notes (opcional)
      */
-    public function assignTemplate(Request $request): JsonResponse
-    {
-        try {
-            $professorId = (int) auth()->id();
+   use App\Models\Gym\DailyAssignment; // <- el modelo que pega a daily_assignments
 
-            $validated = $request->validate([
-                'professor_student_assignment_id' => 'required|integer',
-                'daily_template_id' => 'required|integer',
-                'start_date' => 'nullable|date',
-                'end_date' => 'nullable|date|after_or_equal:start_date',
-                'frequency' => 'nullable|array|min:1',
-                'frequency.*' => 'integer|between:0,6',
-                'professor_notes' => 'nullable|string|max:1000',
-            ]);
+public function assignTemplate(Request $request): JsonResponse
+{
+    try {
+        $professorId = (int) auth()->id();
 
-            $incoming = (int) $validated['professor_student_assignment_id'];
+        $validated = $request->validate([
+            'professor_student_assignment_id' => 'required|integer',
+            'daily_template_id' => 'required|integer',
+            'start_date' => 'nullable|date',
+            'end_date' => 'nullable|date|after_or_equal:start_date',
+            'frequency' => 'nullable|array|min:1',
+            'frequency.*' => 'integer|between:0,6',
+            'professor_notes' => 'nullable|string|max:1000',
+        ]);
 
-            // ✅ Resuelve ID real (PSA real si vino socio_padron.id, crea user/psa si hace falta)
-            $psaId = $this->resolveProfessorStudentAssignmentId($incoming, $professorId);
+        $incoming = (int) $validated['professor_student_assignment_id'];
+        $psaId = $this->resolveProfessorStudentAssignmentId($incoming, $professorId);
 
-            $assignment = TemplateAssignment::create([
-                'professor_student_assignment_id' => $psaId,
-                'daily_template_id' => (int) $validated['daily_template_id'],
-                'start_date' => isset($validated['start_date']) ? $validated['start_date'] : now()->toDateString(),
-                'end_date' => $validated['end_date'] ?? null,
-                'frequency' => $validated['frequency'] ?? null,
-                'professor_notes' => $validated['professor_notes'] ?? null,
-                'status' => 'active',
-            ]);
+        $assignment = DailyAssignment::create([
+            'professor_student_assignment_id' => $psaId,
+            'daily_template_id' => (int) $validated['daily_template_id'],
+            'start_date' => $validated['start_date'] ?? now()->startOfDay(),
+            'end_date' => $validated['end_date'] ?? null,
+            'frequency' => $validated['frequency'] ?? null,
+            'professor_notes' => $validated['professor_notes'] ?? null,
+            'status' => 'active',
 
-            return response()->json([
-                'success' => true,
-                'message' => 'Plantilla asignada correctamente',
-                'data' => $assignment->load(['dailyTemplate', 'professorStudentAssignment.student']),
-            ]);
+            // ✅ FIX
+            'assigned_by' => $professorId,
+        ]);
 
-        } catch (\Throwable $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Error al asignar plantilla',
-                'error' => $e->getMessage(),
-            ], 422);
-        }
+        return response()->json([
+            'success' => true,
+            'message' => 'Plantilla asignada correctamente',
+            'data' => $assignment,
+        ]);
+
+    } catch (\Throwable $e) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Error al asignar plantilla',
+            'error' => $e->getMessage(),
+        ], 422);
     }
+}
 
     /**
      * ✅ Si el front manda el "id" que viene de myStudents() (socio_padron.id),
