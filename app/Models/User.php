@@ -9,6 +9,8 @@ use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Laravel\Sanctum\HasApiTokens;
 use Illuminate\Database\Eloquent\Casts\Attribute;
+use App\Models\SocioPadron;
+
 
 class User extends Authenticatable
 {
@@ -611,6 +613,7 @@ class User extends Authenticatable
             'id',            // Local key en users (profesor)
             'student_id'     // Local key en professor_student_assignments
         )->where('professor_student_assignments.status', 'active');
+        
     }
         /**
      * Socios (usuarios API) asignados a este profesor
