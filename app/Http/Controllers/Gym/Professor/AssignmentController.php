@@ -26,52 +26,87 @@ class AssignmentController extends Controller
    public function myStudents(Request $request): JsonResponse
 {
     try {
-        // Si querés forzarlo siempre, eliminá este if y dejá solo el bloque socios.
-        $source = (string) $request->query('source', '');
+        $perPage = (int) $request->query('per_page', 20);
+        $perPage = max(1, min(200, $perPage));
+        $page    = (int) $request->query('page', 1);
+        $search  = trim((string) $request->query('search', $request->query('q', '')));
 
-        if ($source === 'socios') {
-            $perPage = (int) $request->query('per_page', 20);
-            $perPage = max(1, min(200, $perPage));
-            $page    = (int) $request->query('page', 1);
-            $q       = trim((string) $request->query('search', $request->query('q', '')));
+        // SOCIOS asignados (professor_socio + socios_padron)
+        $baseQuery = SocioPadron::query()
+            ->join('professor_socio', 'professor_socio.socio_id', '=', 'socios_padron.id')
+            ->where('professor_socio.professor_id', auth()->id())
+            ->select([
+                'socios_padron.id',
+                'socios_padron.dni',
+                'socios_padron.sid',
+                'socios_padron.apynom',
+                'socios_padron.barcode',
+                'socios_padron.saldo',
+                'socios_padron.semaforo',
+                'socios_padron.hab_controles',
+            ])
+            ->orderBy('socios_padron.apynom')
+            ->orderBy('socios_padron.dni');
 
-            $query = SocioPadron::query()
-                ->join('professor_socio', 'professor_socio.socio_id', '=', 'socios_padron.id')
-                ->where('professor_socio.professor_id', auth()->id())
-                ->select([
-                    'socios_padron.id',
-                    'socios_padron.dni',
-                    'socios_padron.sid',
-                    'socios_padron.apynom',
-                    'socios_padron.barcode',
-                    'socios_padron.saldo',
-                    'socios_padron.semaforo',
-                    'socios_padron.hab_controles',
-                ])
-                ->orderBy('socios_padron.apynom')
-                ->orderBy('socios_padron.dni');
-
-            if ($q !== '') {
-                $query->where(function ($w) use ($q) {
-                    $w->where('socios_padron.dni', 'like', "%{$q}%")
-                      ->orWhere('socios_padron.sid', 'like', "%{$q}%")
-                      ->orWhere('socios_padron.apynom', 'like', "%{$q}%");
-                });
-            }
-
-            $paginator = $query->paginate($perPage, ['*'], 'page', $page);
-
-            // Devolvemos en el MISMO formato paginator que espera el front (current_page, data, total, etc.)
-            return response()->json($paginator);
+        if ($search !== '') {
+            $baseQuery->where(function ($w) use ($search) {
+                $w->where('socios_padron.dni', 'like', "%{$search}%")
+                  ->orWhere('socios_padron.sid', 'like', "%{$search}%")
+                  ->orWhere('socios_padron.apynom', 'like', "%{$search}%");
+            });
         }
 
-        // Default viejo: students reales
-        $students = $this->assignmentService->getProfessorStudents(
-            auth()->id(),
-            $this->buildFilters($request)
+        $paginator = $baseQuery->paginate($perPage, ['*'], 'page', $page);
+
+        // Convertimos cada socio a "assignment" con estructura compatible:
+        $data = $paginator->getCollection()->map(function ($socio) {
+            return [
+                'id' => (int) $socio->id, // id del socio_padron (pseudo id assignment)
+                'professor_id' => (int) auth()->id(),
+                'student_id' => (int) $socio->id, // pseudo
+                'status' => 'active',
+                'start_date' => null,
+                'end_date' => null,
+                'admin_notes' => null,
+                'created_at' => null,
+                'updated_at' => null,
+
+                // el front usa assignment.student.xxx -> armamos un "student" compatible
+                'student' => [
+                    'id' => (int) $socio->id,
+                    'dni' => $socio->dni,
+                    'name' => (string) ($socio->apynom ?? ''),
+                    'email' => null,
+                    'user_type' => 'socio',
+                    'type_label' => 'Socio',
+                    'socio_id' => (string) ($socio->sid ?? null),
+                    'socio_n' => (string) ($socio->sid ?? null),
+                    'barcode' => $socio->barcode,
+                    'saldo' => $socio->saldo,
+                    'semaforo' => $socio->semaforo,
+                    'hab_controles' => $socio->hab_controles,
+                    'foto_url' => null,
+                    'avatar_path' => null,
+                ],
+
+                // para que no rompa si espera template_assignments
+                'template_assignments' => [],
+            ];
+        })->values();
+
+        // Devolvemos paginator "clásico" igual que Laravel
+        $out = new LengthAwarePaginator(
+            $data,
+            $paginator->total(),
+            $paginator->perPage(),
+            $paginator->currentPage(),
+            [
+                'path' => $request->url(),
+                'query' => $request->query(),
+            ]
         );
 
-        return response()->json($students);
+        return response()->json($out);
 
     } catch (\Throwable $e) {
         return response()->json([
@@ -80,6 +115,7 @@ class AssignmentController extends Controller
         ], 500);
     }
 }
+
 
 
     /**
