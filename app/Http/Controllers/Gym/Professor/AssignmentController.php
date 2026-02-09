@@ -121,6 +121,59 @@ class AssignmentController extends Controller
         ], 500);
     }
 }
+public function studentTemplateAssignments(Request $request, int $studentId): JsonResponse
+{
+    try {
+        // 1) Buscar la asignación activa profesor->student (studentId = users.id)
+        $psa = ProfessorStudentAssignment::query()
+            ->where('professor_id', auth()->id())
+            ->where('student_id', $studentId)
+            ->where('status', 'active')
+            ->first();
+
+        if (!$psa) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Alumno no asignado a este profesor'
+            ], 403);
+        }
+
+        // 2) Traer asignaciones de plantilla de ese PSA
+        $assignments = TemplateAssignment::with(['dailyTemplate'])
+            ->where('professor_student_assignment_id', $psa->id)
+            ->orderByDesc('start_date')
+            ->get()
+            ->map(function ($a) {
+                return [
+                    'id' => (int) $a->id,
+                    'professor_student_assignment_id' => (int) $a->professor_student_assignment_id,
+                    'daily_template_id' => (int) $a->daily_template_id,
+                    'assigned_by' => (int) ($a->assigned_by ?? 0),
+                    'start_date' => $a->start_date,
+                    'end_date' => $a->end_date,
+                    'frequency' => $a->frequency,
+                    'professor_notes' => $a->professor_notes,
+                    'status' => $a->status,
+                    'created_at' => $a->created_at,
+                    'updated_at' => $a->updated_at,
+                    'daily_template' => $a->dailyTemplate, // para el front
+                ];
+            });
+
+        return response()->json([
+            'success' => true,
+            'data' => $assignments,
+        ]);
+
+    } catch (\Throwable $e) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Error al obtener plantillas del alumno',
+            'error' => $e->getMessage(),
+        ], 500);
+    }
+}
+
 
 
 
