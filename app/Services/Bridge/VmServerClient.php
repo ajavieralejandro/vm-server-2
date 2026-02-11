@@ -2,7 +2,9 @@
 
 namespace App\Services\Bridge;
 
+use App\Exceptions\VmServerAuthException;
 use App\Exceptions\VmServerException;
+use App\Exceptions\VmServerUnavailableException;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
@@ -16,9 +18,11 @@ class VmServerClient
 
     public function __construct()
     {
-        $this->baseUrl = rtrim((string) env('VMSERVER_BASE_URL', ''), '/');
-        $this->internalToken = (string) env('VMSERVER_INTERNAL_TOKEN', '');
-        $this->timeoutSeconds = (int) env('VMSERVER_TIMEOUT_SECONDS', 8);
+        $config = (array) config('services.vmserver', []);
+
+        $this->baseUrl = rtrim((string) ($config['base_url'] ?? ''), '/');
+        $this->internalToken = (string) ($config['internal_token'] ?? '');
+        $this->timeoutSeconds = (int) ($config['timeout'] ?? 8);
     }
 
     /**
@@ -31,23 +35,25 @@ class VmServerClient
      */
     public function getPadronByDni(string $dni): ?array
     {
+        $start = microtime(true);
+        $status = null;
+
         if ($this->baseUrl === '' || $this->internalToken === '') {
+            $durationMs = (int) round((microtime(true) - $start) * 1000);
+
             Log::error('VmServerClient misconfigured', [
-                'base_url_present' => $this->baseUrl !== '',
-                'internal_token_present' => $this->internalToken !== '',
+                'dni' => $dni,
+                'status' => $status,
+                'duration_ms' => $durationMs,
+                'error_type' => 'misconfigured',
             ]);
 
-            throw new VmServerException('vmServer client is not properly configured');
+            throw new VmServerUnavailableException('vmServer client is not properly configured');
         }
 
         $path = '/api/internal/padron/by-dni/' . urlencode($dni);
 
         try {
-            Log::info('VmServerClient request', [
-                'path' => $path,
-                'timeout_seconds' => $this->timeoutSeconds,
-            ]);
-
             $response = Http::baseUrl($this->baseUrl)
                 ->timeout($this->timeoutSeconds)
                 ->acceptJson()
@@ -57,41 +63,76 @@ class VmServerClient
                 ->get($path);
 
             $status = $response->status();
-            $body = (string) $response->body();
-
-            Log::info('VmServerClient response', [
-                'status' => $status,
-                'body_snippet' => substr($body, 0, 1000),
-            ]);
+            $durationMs = (int) round((microtime(true) - $start) * 1000);
 
             if ($status === 404) {
+                Log::info('VmServerClient padron not found', [
+                    'dni' => $dni,
+                    'status' => $status,
+                    'duration_ms' => $durationMs,
+                    'error_type' => 'not_found',
+                ]);
+
                 return null;
             }
 
+            if ($status === 401 || $status === 403) {
+                Log::warning('VmServerClient auth error', [
+                    'dni' => $dni,
+                    'status' => $status,
+                    'duration_ms' => $durationMs,
+                    'error_type' => 'auth',
+                ]);
+
+                throw new VmServerAuthException('vmServer authentication failed with status ' . $status);
+            }
+
             if (!$response->successful()) {
+                Log::error('VmServerClient upstream error', [
+                    'dni' => $dni,
+                    'status' => $status,
+                    'duration_ms' => $durationMs,
+                    'error_type' => 'upstream_error',
+                ]);
+
                 throw new VmServerException('vmServer error with status ' . $status);
             }
 
             $data = $response->json();
 
             if (!is_array($data)) {
+                Log::error('VmServerClient invalid json', [
+                    'dni' => $dni,
+                    'status' => $status,
+                    'duration_ms' => $durationMs,
+                    'error_type' => 'invalid_json',
+                ]);
+
                 throw new VmServerException('vmServer returned an invalid response format');
             }
 
-            return $data;
-        } catch (VmServerException $e) {
-            Log::error('VmServerClient VmServerException', [
-                'message' => $e->getMessage(),
+            Log::info('VmServerClient padron ok', [
+                'dni' => $dni,
+                'status' => $status,
+                'duration_ms' => $durationMs,
+                'error_type' => 'ok',
             ]);
 
+            return $data;
+        } catch (VmServerAuthException|VmServerException|VmServerUnavailableException $e) {
+            // Already logged in the specific branch above.
             throw $e;
         } catch (\Throwable $e) {
-            Log::error('VmServerClient transport exception', [
-                'class' => get_class($e),
-                'message' => $e->getMessage(),
+            $durationMs = (int) round((microtime(true) - $start) * 1000);
+
+            Log::error('VmServerClient network/unexpected error', [
+                'dni' => $dni,
+                'status' => $status,
+                'duration_ms' => $durationMs,
+                'error_type' => 'network',
             ]);
 
-            throw new VmServerException('vmServer unavailable', 0, $e);
+            throw new VmServerUnavailableException('vmServer unavailable', 0, $e);
         }
     }
 }

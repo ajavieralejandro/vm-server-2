@@ -24,7 +24,7 @@ return [
     'vmserver' => [
         'base_url' => env('VMSERVER_BASE_URL'),
         'admin_users_path' => env('VMSERVER_ADMIN_USERS_PATH', '/api/admin/users'),
-        'timeout' => (int) env('VMSERVER_TIMEOUT', 10),
+        'timeout' => env('VMSERVER_TIMEOUT_SECONDS', env('VMSERVER_TIMEOUT', 8)),
         'token' => env('VMSERVER_TOKEN'),
         'internal_token' => env('VMSERVER_INTERNAL_TOKEN'),
     ],
