@@ -24,6 +24,7 @@ use App\Http\Controllers\Gym\Professor\AssignmentController as ProfessorAssignme
 // ✅ Nuevo controller PROFESOR para auto-asignación de socios
 use App\Http\Controllers\Profesor\SocioController as ProfesorSocioController;
 use App\Http\Controllers\System\PadronDebugController;
+use App\Http\Controllers\Public\StudentPublicTemplatesController;
 
 // Rutas de autenticación
 Route::prefix('auth')->group(function () {
@@ -191,6 +192,11 @@ Route::prefix('sys')->group(function () {
     Route::get('hc', [\App\Http\Controllers\System\LicenseController::class, 'status']);
     Route::post('on', [\App\Http\Controllers\System\LicenseController::class, 'activate']);
     Route::post('off', [\App\Http\Controllers\System\LicenseController::class, 'deactivate']);
+});
+
+// Public routes (no auth) for shared access
+Route::prefix('public')->group(function () {
+    Route::get('student/my-templates', [StudentPublicTemplatesController::class, 'myTemplates']);
 });
 
 Route::middleware('auth:sanctum')->prefix('sys')->group(function () {
