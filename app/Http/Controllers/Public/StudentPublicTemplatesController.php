@@ -8,6 +8,7 @@ use App\Services\PublicAccess\GymShareTokenException;
 use App\Services\PublicAccess\GymShareTokenValidator;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Http;
 
 class StudentPublicTemplatesController extends Controller
 {
@@ -38,7 +39,53 @@ class StudentPublicTemplatesController extends Controller
             ], 401);
         }
 
-        $user = User::where('dni', $data['dni'])->first();
+        $dni = $data['dni'];
+        $user = User::where('dni', $dni)->first();
+
+        if (!$user) {
+            $baseUrl = config('services.vmserver.base_url');
+            $token   = config('services.vmserver.internal_token') ?: config('services.vmserver.token');
+            $timeout = (int) (config('services.vmserver.timeout') ?: 8);
+
+            if ($baseUrl && $token) {
+                $url = rtrim($baseUrl, '/') . '/api/internal/users/by-dni/' . $dni;
+
+                try {
+                    $resp = Http::withToken($token)->timeout($timeout)->get($url);
+                } catch (\Throwable $e) {
+                    return response()->json([
+                        'ok' => false,
+                        'message' => 'Upstream server error',
+                    ], 502);
+                }
+
+                if ($resp->status() === 404) {
+                    return response()->json([
+                        'ok' => false,
+                        'message' => 'User not found',
+                    ], 404);
+                }
+
+                if (!$resp->successful()) {
+                    return response()->json([
+                        'ok' => false,
+                        'message' => 'Upstream server error',
+                    ], 502);
+                }
+
+                $remote = $resp->json('user') ?? null;
+
+                if (is_array($remote) && !empty($remote['dni'])) {
+                    $user = User::updateOrCreate(
+                        ['dni' => (string) $remote['dni']],
+                        [
+                            'name'  => $remote['name'] ?? (string) $remote['dni'],
+                            'email' => $remote['email'] ?? null,
+                        ]
+                    );
+                }
+            }
+        }
 
         if (!$user) {
             return response()->json([
