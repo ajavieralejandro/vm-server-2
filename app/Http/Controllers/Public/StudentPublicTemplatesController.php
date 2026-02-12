@@ -15,31 +15,57 @@ class StudentPublicTemplatesController extends Controller
     public function myTemplates(Request $request, GymShareTokenValidator $validator): JsonResponse
     {
         $token = $request->query('token');
+        $dni = null;
 
-        if (!$token) {
-            return response()->json([
-                'ok' => false,
-                'message' => 'Unauthorized',
-            ], 401);
-        }
+        if ($token) {
+            try {
+                $data = $validator->validate($token);
+            } catch (GymShareTokenException $e) {
+                if ($e->getMessage() === 'missing_secret') {
+                    return response()->json([
+                        'ok' => false,
+                        'message' => 'Internal server error',
+                    ], 500);
+                }
 
-        try {
-            $data = $validator->validate($token);
-        } catch (GymShareTokenException $e) {
-            if ($e->getMessage() === 'missing_secret') {
                 return response()->json([
                     'ok' => false,
-                    'message' => 'Internal server error',
-                ], 500);
+                    'message' => 'Unauthorized',
+                ], 401);
             }
 
-            return response()->json([
-                'ok' => false,
-                'message' => 'Unauthorized',
-            ], 401);
+            $dni = $data['dni'];
+        } else {
+            $bypassEnabled = config('services.public_templates.bypass_enabled');
+
+            if (!$bypassEnabled) {
+                return response()->json([
+                    'ok' => false,
+                    'message' => 'Unauthorized',
+                ], 401);
+            }
+
+            $demoKey = config('services.public_templates.demo_key');
+            $headerKey = $request->header('X-Demo-Key');
+
+            if (!$demoKey || $headerKey !== $demoKey) {
+                return response()->json([
+                    'ok' => false,
+                    'message' => 'Unauthorized',
+                ], 401);
+            }
+
+            $dni = $request->query('dni');
+            $dni = is_null($dni) ? null : (string) $dni;
+
+            if (!is_string($dni) || !preg_match('/^\d{7,9}$/', $dni)) {
+                return response()->json([
+                    'ok' => false,
+                    'message' => 'Invalid dni',
+                ], 422);
+            }
         }
 
-        $dni = $data['dni'];
         $user = User::where('dni', $dni)->first();
 
         if (!$user) {

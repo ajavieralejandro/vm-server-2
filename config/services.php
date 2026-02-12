@@ -51,4 +51,9 @@ return [
         ],
     ],
 
+    'public_templates' => [
+        'bypass_enabled' => filter_var(env('PUBLIC_TEMPLATES_BYPASS', false), FILTER_VALIDATE_BOOLEAN),
+        'demo_key' => env('PUBLIC_TEMPLATES_DEMO_KEY'),
+    ],
+
 ];

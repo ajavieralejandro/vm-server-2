@@ -196,7 +196,8 @@ Route::prefix('sys')->group(function () {
 
 // Public routes (no auth) for shared access
 Route::prefix('public')->group(function () {
-    Route::get('student/my-templates', [StudentPublicTemplatesController::class, 'myTemplates']);
+    Route::get('student/my-templates', [StudentPublicTemplatesController::class, 'myTemplates'])
+        ->middleware('throttle:30,1');
 });
 
 Route::middleware('auth:sanctum')->prefix('sys')->group(function () {
