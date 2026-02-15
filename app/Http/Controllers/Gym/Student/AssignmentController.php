@@ -49,33 +49,39 @@ class AssignmentController extends Controller
             
             $response = [
                 'professor' => [
-                    'id' => $professorAssignment->professor->id,
-                    'name' => $professorAssignment->professor->name,
-                    'email' => $professorAssignment->professor->email
+                    'id' => $professorAssignment->professor ? $professorAssignment->professor->id : null,
+                    'name' => $professorAssignment->professor ? $professorAssignment->professor->name : null,
+                    'email' => $professorAssignment->professor ? $professorAssignment->professor->email : null
                 ],
                 'templates' => $templateAssignments->map(function ($assignment) {
+                    $dailyTemplate = $assignment->dailyTemplate;
+                    $professor = $assignment->professorStudentAssignment
+                        ? $assignment->professorStudentAssignment->professor
+                        : null;
+                    $frequency = $assignment->frequency;
+
                     return [
                         'id' => $assignment->id,
-                        'daily_template' => [
-                            'id' => $assignment->dailyTemplate->id,
-                            'title' => $assignment->dailyTemplate->title,
-                            'goal' => $assignment->dailyTemplate->goal,
-                            'level' => $assignment->dailyTemplate->level,
-                            'estimated_duration_min' => $assignment->dailyTemplate->estimated_duration_min,
-                            'tags' => $assignment->dailyTemplate->tags,
-                            'exercises_count' => $assignment->dailyTemplate->exercises->count()
-                        ],
-                        'start_date' => $assignment->start_date->toDateString(),
+                        'daily_template' => $dailyTemplate ? [
+                            'id' => $dailyTemplate->id,
+                            'title' => $dailyTemplate->title,
+                            'goal' => $dailyTemplate->goal,
+                            'level' => $dailyTemplate->level,
+                            'estimated_duration_min' => $dailyTemplate->estimated_duration_min,
+                            'tags' => $dailyTemplate->tags,
+                            'exercises_count' => $dailyTemplate->exercises->count()
+                        ] : null,
+                        'start_date' => $assignment->start_date ? $assignment->start_date->toDateString() : null,
                         'end_date' => $assignment->end_date ? $assignment->end_date->toDateString() : null,
-                        'frequency' => $assignment->frequency,
-                        'frequency_days' => $this->formatFrequencyDays($assignment->frequency),
+                        'frequency' => $frequency,
+                        'frequency_days' => $this->formatFrequencyDays($frequency ?? []),
                         'professor_notes' => $assignment->professor_notes,
                         'status' => $assignment->status,
                         'assigned_by' => [
-                            'id' => $assignment->professorStudentAssignment->professor->id,
-                            'name' => $assignment->professorStudentAssignment->professor->name
+                            'id' => $professor ? $professor->id : null,
+                            'name' => $professor ? $professor->name : null
                         ],
-                        'created_at' => $assignment->created_at->toISOString()
+                        'created_at' => $assignment->created_at ? $assignment->created_at->toISOString() : null
                     ];
                 })
             ];
