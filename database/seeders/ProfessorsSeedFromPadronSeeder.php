@@ -37,7 +37,7 @@ class ProfessorsSeedFromPadronSeeder extends Seeder
         $createdUsers = 0;
         $updatedUsers = 0;
         $assignedProfessors = 0;
-        $skippedMissingPadron = 0;
+        $missingPadron = 0;
 
         foreach ($entries as $entry) {
             $dni = trim((string) ($entry['dni'] ?? ''));
@@ -50,12 +50,11 @@ class ProfessorsSeedFromPadronSeeder extends Seeder
 
             $padron = SocioPadron::query()->where('dni', $dni)->first();
             if (!$padron) {
-                $this->printLine("SKIP: DNI {$dni} not found in socios_padron");
-                $skippedMissingPadron++;
-                continue;
+                $this->printLine("WARN: DNI {$dni} not found in socios_padron, creating anyway");
+                $missingPadron++;
             }
 
-            $padronName = trim((string) $padron->apynom);
+            $padronName = $padron ? trim((string) $padron->apynom) : '';
             $name = $padronName !== '' ? $padronName : (string) ($entry['name'] ?? '');
 
             $user = User::query()->where('dni', $dni)->first();
@@ -128,7 +127,7 @@ class ProfessorsSeedFromPadronSeeder extends Seeder
         $this->printLine("created_users={$createdUsers}");
         $this->printLine("updated_users={$updatedUsers}");
         $this->printLine("assigned_professors={$assignedProfessors}");
-        $this->printLine("skipped_missing_padron={$skippedMissingPadron}");
+        $this->printLine("missing_padron={$missingPadron}");
     }
 
     private function generatePassword(int $length): string
