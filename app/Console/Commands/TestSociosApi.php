@@ -2,7 +2,7 @@
 
 namespace App\Console\Commands;
 
-use App\Services\SociosApi;
+use App\Services\External\SociosApi;
 use Illuminate\Console\Command;
 
 class TestSociosApi extends Command

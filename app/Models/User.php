@@ -65,6 +65,7 @@ class User extends Authenticatable
         'validmail_ts',
         // Campos de administración
         'is_admin',
+        'is_professor',
         'permissions',
         'admin_notes',
         'account_status',

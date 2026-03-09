@@ -139,6 +139,80 @@ class ProfesorSocioController extends Controller
     }
 
     /**
+     * POST /api/admin/professors/{profesor}/socios/assign
+     * body: { socio_padron_id?: number, user_id?: number }
+     * Agrega un socio al profesor sin quitar los demás (attach individual)
+     */
+    public function assignSocio(Request $request, User $profesor): JsonResponse
+    {
+        abort_unless((bool) $profesor->is_professor, 404);
+
+        $data = $request->validate([
+            'socio_padron_id' => 'nullable|integer|exists:socios_padron,id',
+            'user_id'         => 'nullable|integer|exists:users,id',
+        ]);
+
+        if (empty($data['socio_padron_id']) && empty($data['user_id'])) {
+            return response()->json(['message' => 'Se requiere socio_padron_id o user_id.'], 422);
+        }
+
+        if (!empty($data['socio_padron_id'])) {
+            $profesor->sociosPadronAsignados()->syncWithoutDetaching([
+                $data['socio_padron_id'] => [
+                    'assigned_by' => auth()->id(),
+                    'updated_at'  => now(),
+                    'created_at'  => now(),
+                ],
+            ]);
+        }
+
+        return response()->json(['ok' => true]);
+    }
+
+    /**
+     * DELETE|POST /api/admin/professors/{profesor}/socios/remove
+     * body: { socio_padron_id?: number, user_id?: number }
+     * Quita un socio del profesor (detach individual)
+     */
+    public function removeSocio(Request $request, User $profesor): JsonResponse
+    {
+        abort_unless((bool) $profesor->is_professor, 404);
+
+        $data = $request->validate([
+            'socio_padron_id' => 'nullable|integer|exists:socios_padron,id',
+            'user_id'         => 'nullable|integer|exists:users,id',
+        ]);
+
+        if (!empty($data['socio_padron_id'])) {
+            $profesor->sociosPadronAsignados()->detach($data['socio_padron_id']);
+        }
+
+        return response()->json(['ok' => true]);
+    }
+
+    /**
+     * POST /api/admin/socios/make-professor
+     * body: { user_id: number }
+     * Asigna el rol de profesor a un usuario existente
+     */
+    public function makeProfessor(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'user_id' => 'required|integer|exists:users,id',
+        ]);
+
+        $user = User::findOrFail($data['user_id']);
+
+        if (!$user->is_professor) {
+            $user->is_professor    = true;
+            $user->professor_since = now();
+            $user->save();
+        }
+
+        return response()->json(['ok' => true, 'professor' => $user->fresh()]);
+    }
+
+    /**
      * POST /api/admin/profesores/{profesor}/socios
      * body: { socio_ids: number[] }  // ✅ ids de socios_padron
      */

@@ -114,11 +114,11 @@ class AdminProfessorController extends Controller
     public function assignProfessor(Request $request, User $user): JsonResponse
     {
         $validated = $request->validate([
-            'qualifications' => 'required|array',
-            'qualifications.education' => 'required|string|max:255',
+            'qualifications' => 'nullable|array',
+            'qualifications.education' => 'nullable|string|max:255',
             'qualifications.certifications' => 'nullable|array',
             'qualifications.certifications.*' => 'string|max:255',
-            'qualifications.experience_years' => 'required|integer|min:0|max:50',
+            'qualifications.experience_years' => 'nullable|integer|min:0|max:50',
             'qualifications.specialties' => 'nullable|array',
             'qualifications.specialties.*' => 'string|in:strength,hypertrophy,endurance,mobility,rehabilitation,functional,crossfit,yoga,pilates',
             'permissions' => 'nullable|array',

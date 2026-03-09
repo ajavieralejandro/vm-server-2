@@ -100,6 +100,14 @@ Route::middleware('auth:sanctum')->group(function () {
         // Asignación directa de alumnos a profesor (admin)
         Route::get('professors/{professor}/students', [ProfessorStudentController::class, 'index']);
         Route::post('professors/{professor}/assign-students', [ProfessorStudentController::class, 'assign']);
+
+        // Asignación individual de socios a profesor (frontend adminProfessorSocios.ts)
+        Route::post('professors/{professor}/socios/assign', [AdminProfesorSocioController::class, 'assignSocio']);
+        Route::delete('professors/{professor}/socios/remove', [AdminProfesorSocioController::class, 'removeSocio']);
+        Route::post('professors/{professor}/socios/remove', [AdminProfesorSocioController::class, 'removeSocio']);
+
+        // Promover usuario a profesor desde panel de socios
+        Route::post('socios/make-professor', [AdminProfesorSocioController::class, 'makeProfessor']);
     });
 
     // ✅ Compatibilidad por el doble /api de tu frontend (si aún lo necesitás)

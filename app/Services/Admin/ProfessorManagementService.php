@@ -182,7 +182,7 @@ class ProfessorManagementService
 
         // Preparar notas estructuradas
         $structuredNotes = [
-            'qualifications' => $data['qualifications'],
+            'qualifications' => $data['qualifications'] ?? [],
             'permissions' => $data['permissions'] ?? [],
             'schedule' => $data['schedule'] ?? null,
             'notes' => $data['notes'] ?? null,
