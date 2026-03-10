@@ -22,9 +22,9 @@ use App\Http\Controllers\Gym\Admin\WeeklyAssignmentController;
 */
 
 Route::middleware(['auth:sanctum', 'admin'])->prefix('admin')->group(function () {
-    
+
     // ==================== GESTIÓN DE USUARIOS ====================
-    
+
     Route::prefix('users')->group(function () {
         Route::get('/', [AdminUserController::class, 'index'])->name('admin.users.index');
         Route::post('/', [AdminUserController::class, 'store'])->name('admin.users.store');
@@ -32,13 +32,13 @@ Route::middleware(['auth:sanctum', 'admin'])->prefix('admin')->group(function ()
         Route::get('/{user}', [AdminUserController::class, 'show'])->name('admin.users.show');
         Route::put('/{user}', [AdminUserController::class, 'update'])->name('admin.users.update');
         Route::delete('/{user}', [AdminUserController::class, 'destroy'])->name('admin.users.destroy');
-        
+
         // Gestión de roles
         Route::post('/{user}/assign-admin', [AdminUserController::class, 'assignAdminRole'])
             ->name('admin.users.assign-admin');
         Route::delete('/{user}/remove-admin', [AdminUserController::class, 'removeAdminRole'])
             ->name('admin.users.remove-admin');
-        
+
         // Gestión de estado de cuenta
         Route::post('/{user}/suspend', [AdminUserController::class, 'suspend'])
             ->name('admin.users.suspend');
@@ -46,24 +46,12 @@ Route::middleware(['auth:sanctum', 'admin'])->prefix('admin')->group(function ()
             ->name('admin.users.activate');
     });
 
-    // ==================== GESTIÓN DE PROFESORES ====================
-    
+    // ==================== GESTIÓN DE PROFESORES (solo admin) ====================
+    // Operaciones sensibles que requieren rol admin explícito
+
     Route::prefix('professors')->group(function () {
-        Route::get('/', [AdminProfessorController::class, 'index'])->name('admin.professors.index');
-        Route::get('/{professor}', [AdminProfessorController::class, 'show'])
-            ->name('admin.professors.show');
         Route::put('/{professor}', [AdminProfessorController::class, 'update'])
             ->name('admin.professors.update');
-        
-        // Asignación y remoción de rol profesor
-        Route::post('/{user}/assign', [AdminProfessorController::class, 'assignProfessor'])
-            ->name('admin.professors.assign');
-        Route::delete('/{professor}/remove', [AdminProfessorController::class, 'removeProfessor'])
-            ->name('admin.professors.remove');
-        
-        // Gestión de estudiantes
-        Route::get('/{professor}/students', [AdminProfessorController::class, 'students'])
-            ->name('admin.professors.students');
         Route::post('/{professor}/reassign-student', [AdminProfessorController::class, 'reassignStudent'])
             ->name('admin.professors.reassign-student');
     });

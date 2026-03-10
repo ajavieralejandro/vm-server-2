@@ -16,6 +16,7 @@ use App\Http\Controllers\Gym\Admin\ProfessorStudentController;
 
 use App\Http\Controllers\Gym\Mobile\MyPlanController as GymMyPlanController;
 
+use App\Http\Controllers\Admin\AdminProfessorController;
 use App\Http\Controllers\Admin\AssignmentController as AdminAssignmentController;
 use App\Http\Controllers\Admin\ProfesorSocioController as AdminProfesorSocioController;
 
@@ -80,7 +81,6 @@ Route::middleware('auth:sanctum')->group(function () {
 
         // Asignaciones profesor-estudiante
         Route::apiResource('assignments', AdminAssignmentController::class);
-        Route::get('professors/{professor}/students', [AdminAssignmentController::class, 'professorStudents']);
         Route::get('students/unassigned', [AdminAssignmentController::class, 'unassignedStudents']);
         Route::get('assignments-stats', [AdminAssignmentController::class, 'stats']);
 
@@ -97,8 +97,17 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('profesores/{profesor}/socios', [AdminProfesorSocioController::class, 'sociosPorProfesor']);
         Route::post('profesores/{profesor}/socios', [AdminProfesorSocioController::class, 'syncSocios']);
 
-        // Asignación directa de alumnos a profesor (admin)
-        Route::get('professors/{professor}/students', [ProfessorStudentController::class, 'index']);
+        // Gestión de profesores: listado, asignación y remoción de rol
+        Route::get('professors', [AdminProfessorController::class, 'index'])
+            ->name('admin.professors.index');
+        Route::get('professors/{professor}', [AdminProfessorController::class, 'show'])
+            ->name('admin.professors.show');
+        Route::post('professors/{user}/assign', [AdminProfessorController::class, 'assignProfessor'])
+            ->name('admin.professors.assign');
+        Route::delete('professors/{professor}/remove', [AdminProfessorController::class, 'removeProfessor'])
+            ->name('admin.professors.remove');
+        Route::get('professors/{professor}/students', [AdminProfessorController::class, 'students'])
+            ->name('admin.professors.students');
         Route::post('professors/{professor}/assign-students', [ProfessorStudentController::class, 'assign']);
 
         // Asignación individual de socios a profesor (frontend adminProfessorSocios.ts)

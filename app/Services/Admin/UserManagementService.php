@@ -178,7 +178,7 @@ class UserManagementService
             }
         }
 
-        $user->update($data);
+        $user->forceFill($data)->save();
 
         // Log de auditoría
         $this->auditService->logUpdate('user', $user->id, $oldValues, $data);

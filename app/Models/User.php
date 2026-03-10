@@ -453,11 +453,11 @@ class User extends Authenticatable
      */
     public function assignProfessorRole(array $qualifications = []): void
     {
-        $this->update([
+        $this->forceFill([
             'is_professor' => true,
             'professor_since' => now(),
             'admin_notes' => $qualifications['notes'] ?? null,
-        ]);
+        ])->save();
     }
 
     /**
@@ -465,10 +465,10 @@ class User extends Authenticatable
      */
     public function removeProfessorRole(): void
     {
-        $this->update([
+        $this->forceFill([
             'is_professor' => false,
             'professor_since' => null,
-        ]);
+        ])->save();
     }
 
     /**
