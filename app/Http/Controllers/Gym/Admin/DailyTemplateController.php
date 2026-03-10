@@ -104,6 +104,7 @@ class DailyTemplateController extends Controller
             'exercises' => 'array',
             'exercises.*.exercise_id' => 'nullable|integer|exists:gym_exercises,id',
             'exercises.*.order' => 'nullable|integer|min:1',
+            'exercises.*.display_order' => 'nullable|integer|min:1',
             'exercises.*.notes' => 'nullable|string',
             'exercises.*.sets' => 'array',
             'exercises.*.sets.*.set_number' => 'nullable|integer|min:1',
@@ -132,7 +133,7 @@ class DailyTemplateController extends Controller
                 $dte = DailyTemplateExercise::create([
                     'daily_template_id' => $tpl->id,
                     'exercise_id' => $ex['exercise_id'] ?? null,
-                    'display_order' => $ex['order'] ?? ($i + 1),
+                    'display_order' => $ex['display_order'] ?? $ex['order'] ?? ($i + 1),
                     'notes' => $ex['notes'] ?? null,
                 ]);
                 
@@ -143,6 +144,7 @@ class DailyTemplateController extends Controller
             }
 
             $tpl->load(['exercises.sets', 'exercises.exercise']);
+            $this->templateService->clearTemplateCache();
             return response()->json($tpl, 201);
         });
     }
@@ -159,6 +161,7 @@ class DailyTemplateController extends Controller
             'exercises' => 'array', // si viene, reemplaza ejercicios completos
             'exercises.*.exercise_id' => 'nullable|integer|exists:gym_exercises,id',
             'exercises.*.order' => 'nullable|integer|min:1',
+            'exercises.*.display_order' => 'nullable|integer|min:1',
             'exercises.*.notes' => 'nullable|string',
             'exercises.*.sets' => 'array',
             'exercises.*.sets.*.set_number' => 'nullable|integer|min:1',
@@ -190,7 +193,7 @@ class DailyTemplateController extends Controller
                     $dte = DailyTemplateExercise::create([
                         'daily_template_id' => $dailyTemplate->id,
                         'exercise_id' => $ex['exercise_id'] ?? null,
-                        'display_order' => $ex['order'] ?? ($i + 1),
+                        'display_order' => $ex['display_order'] ?? $ex['order'] ?? ($i + 1),
                         'notes' => $ex['notes'] ?? null,
                     ]);
                     
@@ -202,6 +205,7 @@ class DailyTemplateController extends Controller
             }
 
             $dailyTemplate->load(['exercises.sets', 'exercises.exercise']);
+            $this->templateService->clearTemplateCache();
             return response()->json($dailyTemplate);
         });
     }
@@ -209,6 +213,7 @@ class DailyTemplateController extends Controller
     public function destroy(DailyTemplate $dailyTemplate)
     {
         $dailyTemplate->delete();
+        $this->templateService->clearTemplateCache();
         return response()->noContent();
     }
 

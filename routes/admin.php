@@ -111,10 +111,10 @@ Route::middleware(['auth:sanctum', 'professor'])->prefix('admin/gym')->group(fun
     Route::prefix('daily-templates')->group(function () {
         Route::get('/', [DailyTemplateController::class, 'index'])->name('admin.gym.daily-templates.index');
         Route::post('/', [DailyTemplateController::class, 'store'])->name('admin.gym.daily-templates.store');
-        Route::get('/{template}', [DailyTemplateController::class, 'show'])->name('admin.gym.daily-templates.show');
-        Route::put('/{template}', [DailyTemplateController::class, 'update'])->name('admin.gym.daily-templates.update');
-        Route::delete('/{template}', [DailyTemplateController::class, 'destroy'])->name('admin.gym.daily-templates.destroy');
-        Route::post('/{template}/duplicate', [DailyTemplateController::class, 'duplicate'])->name('admin.gym.daily-templates.duplicate');
+        Route::get('/{dailyTemplate}', [DailyTemplateController::class, 'show'])->name('admin.gym.daily-templates.show');
+        Route::put('/{dailyTemplate}', [DailyTemplateController::class, 'update'])->name('admin.gym.daily-templates.update');
+        Route::delete('/{dailyTemplate}', [DailyTemplateController::class, 'destroy'])->name('admin.gym.daily-templates.destroy');
+        Route::post('/{dailyTemplate}/duplicate', [DailyTemplateController::class, 'duplicate'])->name('admin.gym.daily-templates.duplicate');
     });
     
     // Sets (series individuales)

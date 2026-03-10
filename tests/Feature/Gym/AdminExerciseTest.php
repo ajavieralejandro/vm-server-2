@@ -53,12 +53,13 @@ class AdminExerciseTest extends TestCase
             ->assertJsonFragment(['name' => 'Remo con barra']);
 
         // Update
-        $this->putJson('/api/admin/gym/exercises/'.$create['id'], ['difficulty' => 'intermediate'])
+        $this->putJson('/api/admin/gym/exercises/'.$create['id'], ['difficulty_level' => 'intermediate'])
             ->assertStatus(200)
-            ->assertJsonFragment(['difficulty' => 'intermediate']);
+            ->assertJsonFragment(['difficulty_level' => 'intermediate']);
 
         // Delete
         $this->deleteJson('/api/admin/gym/exercises/'.$create['id'])
-            ->assertNoContent();
+            ->assertOk()
+            ->assertJsonFragment(['message' => 'Ejercicio eliminado correctamente']);
     }
 }

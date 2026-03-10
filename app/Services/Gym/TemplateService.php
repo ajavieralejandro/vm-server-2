@@ -24,17 +24,7 @@ class TemplateService
      */
     public function getFilteredDailyTemplates(array $filters, int $perPage = 20, array $includes = []): LengthAwarePaginator
     {
-        // Generar clave de cache basada en filtros
-        $cacheKey = $this->generateCacheKey('daily_templates', $filters, $perPage, $includes);
-        
-        // Para consultas simples sin filtros específicos, usar cache
-        if ($this->shouldUseCache($filters)) {
-            return Cache::remember($cacheKey, 300, function () use ($filters, $perPage, $includes) {
-                return $this->buildDailyTemplatesQuery($filters, $perPage, $includes);
-            });
-        }
-        
-        // Para consultas complejas o con filtros específicos, no usar cache
+        // Sin cache: siempre consultar DB para garantizar datos frescos
         return $this->buildDailyTemplatesQuery($filters, $perPage, $includes);
     }
 
@@ -81,18 +71,21 @@ class TemplateService
     }
 
     /**
-     * Generar clave de cache
+     * Generar clave de cache — incluye versión para permitir invalidación
+     * sin depender de Redis ni pattern matching
      */
     private function generateCacheKey(string $type, array $filters, int $perPage, array $includes): string
     {
+        $version = Cache::get('templates_cache_version', 0);
+
         $keyData = [
             'type' => $type,
-            'filters' => array_filter($filters), // Solo filtros con valores
+            'filters' => array_filter($filters),
             'per_page' => $perPage,
             'includes' => $includes,
         ];
-        
-        return 'templates_' . md5(serialize($keyData));
+
+        return 'templates_v' . $version . '_' . md5(serialize($keyData));
     }
 
     /**
@@ -561,36 +554,21 @@ class TemplateService
     }
 
     /**
-     * Limpiar cache relacionado con plantillas
+     * Limpiar cache relacionado con plantillas.
+     * Usa un número de versión para invalidar todas las claves de lista
+     * sin depender de Redis ni pattern matching.
      */
-    private function clearTemplateCache(): void
+    public function clearTemplateCache(): void
     {
+        // Incrementar versión invalida todas las claves de lista generadas
+        // por generateCacheKey() sin necesidad de conocerlas individualmente
+        Cache::increment('templates_cache_version');
+
         Cache::forget('template_stats');
-        
-        // Limpiar cache de plantillas más usadas
+
         for ($i = 1; $i <= 20; $i++) {
             Cache::forget("most_used_daily_templates_{$i}");
             Cache::forget("most_used_weekly_templates_{$i}");
-        }
-        
-        // Limpiar cache de consultas filtradas
-        $this->clearFilteredTemplatesCache();
-    }
-
-    /**
-     * Limpiar cache de consultas filtradas
-     */
-    private function clearFilteredTemplatesCache(): void
-    {
-        // Obtener todas las claves de cache que empiecen con 'templates_'
-        $cacheKeys = Cache::getRedis()->keys('*templates_*');
-        
-        if (!empty($cacheKeys)) {
-            foreach ($cacheKeys as $key) {
-                // Remover el prefijo de Redis si existe
-                $cleanKey = str_replace(config('cache.prefix') . ':', '', $key);
-                Cache::forget($cleanKey);
-            }
         }
     }
 

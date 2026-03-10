@@ -397,10 +397,9 @@ class ExerciseService
     public function getMostUsedExercises(int $limit = 10): Collection
     {
         return Cache::remember("most_used_exercises_{$limit}", 600, function () use ($limit) {
-            return Exercise::select('exercises.*', DB::raw('COUNT(template_exercises.id) as usage_count'))
-                ->leftJoin('template_exercises', 'exercises.id', '=', 'template_exercises.exercise_id')
-                ->where('exercises.is_active', true)
-                ->groupBy('exercises.id')
+            return Exercise::select('gym_exercises.*', DB::raw('COUNT(gym_daily_template_exercises.id) as usage_count'))
+                ->leftJoin('gym_daily_template_exercises', 'gym_exercises.id', '=', 'gym_daily_template_exercises.exercise_id')
+                ->groupBy('gym_exercises.id')
                 ->orderByDesc('usage_count')
                 ->limit($limit)
                 ->get();
