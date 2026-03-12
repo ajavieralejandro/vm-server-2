@@ -113,6 +113,7 @@ class User extends Authenticatable
         'semaforo' => 'integer',
         // Campos de administración
         'is_admin' => 'boolean',
+        'is_professor' => 'boolean',
         'permissions' => 'array',
         'professor_since' => 'datetime',
         'student_gym' => 'boolean',
