@@ -454,11 +454,15 @@ class User extends Authenticatable
      */
     public function assignProfessorRole(array $qualifications = []): void
     {
-        $this->forceFill([
-            'is_professor' => true,
+        $updated = $this->newQuery()->where($this->getKeyName(), $this->getKey())->update([
+            'is_professor'    => true,
             'professor_since' => now(),
-            'admin_notes' => $qualifications['notes'] ?? null,
-        ])->save();
+            'admin_notes'     => $qualifications['notes'] ?? null,
+        ]);
+
+        if (!$updated) {
+            throw new \RuntimeException("Failed to assign professor role to user {$this->getKey()}");
+        }
     }
 
     /**
