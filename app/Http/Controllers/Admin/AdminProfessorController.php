@@ -28,7 +28,18 @@ class AdminProfessorController extends Controller
             ]);
 
             // Implementación temporal simple para debugging
-            $professors = \App\Models\User::where('is_professor', true)->get();
+            $search = $request->input('search', '');
+            $query = \App\Models\User::where('is_professor', true);
+
+            if ($search) {
+                $query->where(function ($q) use ($search) {
+                    $q->where('name', 'like', "%{$search}%")
+                      ->orWhere('email', 'like', "%{$search}%")
+                      ->orWhere('dni', 'like', "%{$search}%");
+                });
+            }
+
+            $professors = $query->orderBy('professor_since', 'desc')->get();
 
             // Transformación básica sin stats complejos
             $professorsData = $professors->map(function ($professor) {
