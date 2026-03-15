@@ -134,6 +134,7 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // Admin Gym (protegido por rol 'professor')
     Route::prefix('admin/gym')->middleware('professor')->group(function () {
+        Route::post('exercises/bulk-delete', [GymExerciseController::class, 'bulkDelete']);
         Route::apiResource('exercises', GymExerciseController::class);
         Route::apiResource('daily-templates', GymDailyTemplateController::class);
         Route::apiResource('weekly-templates', GymWeeklyTemplateController::class);

@@ -120,6 +120,34 @@ class ExerciseController extends Controller
         return response()->json($response, $result['status_code']);
     }
 
+    public function bulkDelete(Request $request)
+    {
+        $data = $request->validate([
+            'ids' => 'required|array|min:1',
+            'ids.*' => 'integer|exists:gym_exercises,id',
+        ]);
+
+        $deleted = 0;
+        $errors = [];
+
+        foreach ($data['ids'] as $id) {
+            $exercise = Exercise::find($id);
+            if (!$exercise) continue;
+
+            $result = $this->exerciseService->deleteExercise($exercise, $request->user());
+            if ($result['success']) {
+                $deleted++;
+            } else {
+                $errors[] = ['id' => $id, 'message' => $result['message']];
+            }
+        }
+
+        return response()->json([
+            'deleted_count' => $deleted,
+            'errors' => $errors,
+        ]);
+    }
+
     public function duplicate(Exercise $exercise)
     {
         $duplicated = $this->exerciseService->duplicateExercise($exercise, auth()->user());
