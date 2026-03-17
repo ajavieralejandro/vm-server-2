@@ -3,18 +3,46 @@
 namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Admin\CreateLocalProfessorRequest;
 use App\Models\User;
 use App\Models\SocioPadron;
 use App\Services\Admin\ProfessorManagementService;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
 
 class AdminProfessorController extends Controller
 {
     public function __construct(
         private ProfessorManagementService $professorManagementService
     ) {}
+
+    /**
+     * Crea un usuario local y lo asigna como profesor en una sola operación.
+     * No consulta la API externa de socios.
+     */
+    public function createLocalProfessor(CreateLocalProfessorRequest $request): JsonResponse
+    {
+        try {
+            $professor = $this->professorManagementService->createLocalProfessor(
+                $request->validated(),
+                $request->user()
+            );
+
+            return response()->json([
+                'message'   => 'Profesor local creado y asignado exitosamente.',
+                'professor' => $professor,
+            ], 201);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'message' => 'Error de validación.',
+                'errors'  => $e->errors(),
+            ], 422);
+        } catch (\Exception $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+    }
 
     /**
      * Lista de profesores con estadísticas

@@ -50,6 +50,8 @@ Route::middleware(['auth:sanctum', 'admin'])->prefix('admin')->group(function ()
     // Operaciones sensibles que requieren rol admin explícito
 
     Route::prefix('professors')->group(function () {
+        Route::post('/create-local', [AdminProfessorController::class, 'createLocalProfessor'])
+            ->name('admin.professors.create-local');
         Route::put('/{professor}', [AdminProfessorController::class, 'update'])
             ->name('admin.professors.update');
         Route::post('/{professor}/reassign-student', [AdminProfessorController::class, 'reassignStudent'])

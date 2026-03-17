@@ -4,14 +4,19 @@ namespace App\Services\Admin;
 
 use App\Models\User;
 use App\Models\Gym\WeeklyAssignment;
+use App\Services\Auth\PasswordValidationService;
 use App\Services\Core\AuditService;
+use App\Enums\UserType;
+use App\Enums\PromotionStatus;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Validation\ValidationException;
 
 class ProfessorManagementService
 {
     public function __construct(
-        private AuditService $auditService
+        private AuditService $auditService,
+        private PasswordValidationService $passwordValidationService
     ) {}
 
     /**
@@ -169,6 +174,56 @@ class ProfessorManagementService
                 ];
             }
         })->filter(); // Remover elementos null
+    }
+
+    /**
+     * Crea un usuario LOCAL y lo asigna como profesor en una sola operación.
+     * No consulta la API externa de socios (checkApiAndPromoteIfEligible no se ejecuta).
+     */
+    public function createLocalProfessor(array $data, User $assigner): User
+    {
+        $passwordErrors = $this->passwordValidationService->validatePasswordStrength($data['password']);
+        if (!empty($passwordErrors)) {
+            throw ValidationException::withMessages(['password' => $passwordErrors]);
+        }
+
+        $user = User::create([
+            'dni'              => $data['dni'],
+            'name'             => $data['name'],
+            'email'            => $data['email'],
+            'password'         => $this->passwordValidationService->hashPassword($data['password']),
+            'phone'            => $data['phone'] ?? null,
+            'user_type'        => UserType::LOCAL,
+            'promotion_status' => PromotionStatus::NONE,
+        ]);
+
+        $structuredNotes = [
+            'qualifications'             => $data['qualifications'] ?? [],
+            'permissions'                => [],
+            'schedule'                   => null,
+            'notes'                      => $data['notes'] ?? null,
+            'assigned_by'                => $assigner->id,
+            'assigned_at'                => now()->toISOString(),
+            'created_as_local_professor' => true,
+        ];
+
+        $user->assignProfessorRole(['notes' => json_encode($structuredNotes)]);
+
+        $this->auditService->log(
+            action: 'create_local_professor',
+            resourceType: 'user',
+            resourceId: $user->id,
+            details: [
+                'dni'         => $user->dni,
+                'created_by'  => $assigner->id,
+                'user_type'   => 'local',
+                'skipped_api' => true,
+            ],
+            severity: 'medium',
+            category: 'user_management'
+        );
+
+        return $user->fresh();
     }
 
     /**
