@@ -37,10 +37,10 @@ class AuthProfileTest extends TestCase
         $response = $this->getJson('/api/auth/profile');
 
         $response->assertOk();
-        $response->assertJsonPath('user.id', $this->user->id);
-        $response->assertJsonPath('user.foto_url', 'https://clubvillamitre.com/images/socios/123.jpg');
-        $response->assertJsonPath('avatar_url_resolved', 'https://clubvillamitre.com/images/socios/123.jpg');
-        $response->assertJsonPath('profile.display_name', null);
+        $response->assertJsonPath('data.user.id', $this->user->id);
+        $response->assertJsonPath('data.user.foto_url', 'https://clubvillamitre.com/images/socios/123.jpg');
+        $response->assertJsonPath('data.avatar_url_resolved', 'https://clubvillamitre.com/images/socios/123.jpg');
+        $response->assertJsonPath('data.profile.display_name', null);
     }
 
     /** @test */
@@ -57,9 +57,9 @@ class AuthProfileTest extends TestCase
         ]);
 
         $response->assertOk();
-        $response->assertJsonPath('profile.display_name', 'Javi App');
-        $response->assertJsonPath('profile.app_phone', '2915551234');
-        $response->assertJsonMissingPath('profile.dni');
+        $response->assertJsonPath('data.profile.display_name', 'Javi App');
+        $response->assertJsonPath('data.profile.app_phone', '2915551234');
+        $response->assertJsonMissingPath('data.profile.dni');
 
         $this->assertDatabaseHas('user_profiles', [
             'user_id' => $this->user->id,
@@ -85,7 +85,7 @@ class AuthProfileTest extends TestCase
         ]);
 
         $uploadResponse->assertOk();
-        $uploadResponse->assertJsonPath('user.foto_url', 'https://clubvillamitre.com/images/socios/123.jpg');
+        $uploadResponse->assertJsonPath('data.user.foto_url', 'https://clubvillamitre.com/images/socios/123.jpg');
 
         $profile = UserProfile::where('user_id', $this->user->id)->firstOrFail();
         Storage::disk('public')->assertExists($profile->avatar_path);
@@ -102,7 +102,7 @@ class AuthProfileTest extends TestCase
         $this->assertNotSame($firstAvatarPath, $profile->avatar_path);
         Storage::disk('public')->assertMissing($firstAvatarPath);
         Storage::disk('public')->assertExists($profile->avatar_path);
-        $replaceResponse->assertJsonPath('avatar_url_resolved', $profile->avatar_url);
+        $replaceResponse->assertJsonPath('data.avatar_url_resolved', $profile->avatar_url);
 
         $deleteResponse = $this->deleteJson('/api/auth/profile/avatar');
 
@@ -125,7 +125,7 @@ class AuthProfileTest extends TestCase
         $response = $this->getJson('/api/auth/me');
 
         $response->assertOk();
-        $response->assertJsonPath('user.id', $this->user->id);
-        $response->assertJsonPath('user.foto_url', 'https://clubvillamitre.com/images/socios/123.jpg');
+        $response->assertJsonPath('data.user.id', $this->user->id);
+        $response->assertJsonPath('data.user.foto_url', 'https://clubvillamitre.com/images/socios/123.jpg');
     }
 }

@@ -5,6 +5,7 @@ namespace App\Services\User;
 use App\Models\User;
 use App\Models\UserProfile;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\Storage;
 
 class UserProfileService
@@ -17,7 +18,15 @@ class UserProfileService
     public function updateProfile(User $user, array $data): UserProfile
     {
         $profile = $user->profile()->firstOrCreate([]);
-        $profile->fill($data);
+
+        $allowedData = Arr::only($data, [
+            'display_name',
+            'app_phone',
+            'bio',
+            'preferences',
+        ]);
+
+        $profile->fill($allowedData);
         $profile->save();
 
         return $profile->fresh();

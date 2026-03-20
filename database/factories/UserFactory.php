@@ -2,6 +2,8 @@
 
 namespace Database\Factories;
 
+use App\Enums\PromotionStatus;
+use App\Enums\UserType;
 use Illuminate\Database\Eloquent\Factories\Factory;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
@@ -24,6 +26,9 @@ class UserFactory extends Factory
     public function definition(): array
     {
         return [
+            'dni' => fake()->unique()->numerify('########'),
+            'user_type' => UserType::LOCAL,
+            'promotion_status' => PromotionStatus::NONE,
             'name' => fake()->name(),
             'email' => fake()->unique()->safeEmail(),
             'email_verified_at' => now(),
