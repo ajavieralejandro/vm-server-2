@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\AuthController;
+use App\Http\Controllers\AuthProfileController;
 use App\Http\Controllers\UserController;
 use App\Http\Controllers\PromotionController;
 use App\Http\Controllers\Gym\Admin\ExerciseController as GymExerciseController;
@@ -21,6 +22,10 @@ Route::prefix('auth')->group(function () {
     Route::middleware('auth:sanctum')->group(function () {
         Route::post('logout', [AuthController::class, 'logout']);
         Route::get('me', [AuthController::class, 'me']);
+        Route::get('profile', [AuthProfileController::class, 'show']);
+        Route::patch('profile', [AuthProfileController::class, 'update']);
+        Route::post('profile/avatar', [AuthProfileController::class, 'uploadAvatar']);
+        Route::delete('profile/avatar', [AuthProfileController::class, 'deleteAvatar']);
     });
 });
 

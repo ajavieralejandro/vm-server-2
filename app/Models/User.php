@@ -5,6 +5,7 @@ namespace App\Models;
 use App\Enums\UserType;
 use App\Enums\PromotionStatus;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Laravel\Sanctum\HasApiTokens;
@@ -134,6 +135,12 @@ class User extends Authenticatable
     {
         return $query->where('user_type', UserType::LOCAL);
     }
+
+    public function profile(): HasOne
+    {
+        return $this->hasOne(UserProfile::class);
+    }
+
     public function pointContracts() { return $this->hasMany(\App\Models\UserPointContract::class); }
 public function pointCredits() { return $this->hasMany(\App\Models\PointCredit::class); }
 public function pointRedemptions() { return $this->hasMany(\App\Models\PointRedemption::class); }
@@ -215,9 +222,22 @@ public function getPointsBalanceAttribute(): int
     protected function avatarUrl(): Attribute
     {
         return Attribute::make(
-            get: fn () => $this->foto_url 
-                ? $this->foto_url
-                : ($this->avatar_path ? asset("storage/{$this->avatar_path}") : null),
+            get: fn () => $this->resolved_avatar_url,
+        );
+    }
+
+    protected function resolvedAvatarUrl(): Attribute
+    {
+        return Attribute::make(
+            get: function () {
+                $profile = $this->relationLoaded('profile') ? $this->profile : $this->profile()->first();
+
+                if ($profile?->avatar_url) {
+                    return $profile->avatar_url;
+                }
+
+                return $this->foto_url;
+            },
         );
     }
 
