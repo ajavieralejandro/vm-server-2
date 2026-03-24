@@ -189,6 +189,9 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('socios/disponibles', [\App\Http\Controllers\Profesor\SocioController::class, 'disponibles']);
         Route::post('socios/{socio}', [\App\Http\Controllers\Profesor\SocioController::class, 'store']);
         Route::delete('socios/{socio}', [\App\Http\Controllers\Profesor\SocioController::class, 'destroy']);
+
+        // NUEVO: Endpoint de lectura ampliada de socios
+        Route::get('socios/todos', [\App\Http\Controllers\Gym\Professor\AssignmentController::class, 'allStudents']);
     });
 
     // Estudiantes

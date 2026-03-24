@@ -17,6 +17,56 @@ use App\Models\Gym\ProfessorStudentAssignment;
 
 class AssignmentController extends Controller
 {
+    /**
+     * Endpoint: GET /api/profesor/socios/todos
+     * Devuelve todos los socios visibles para el profesor autenticado, con flag de asignación.
+     */
+    public function allStudents(\Illuminate\Http\Request $request): \Illuminate\Http\JsonResponse
+    {
+        $professorId = (int) auth()->id();
+        $perPage = (int) $request->query('per_page', 20);
+        $perPage = max(1, min(200, $perPage));
+        $search = trim((string) $request->query('search', ''));
+
+        $query = \App\Models\SocioPadron::query()
+            ->select(['id', 'apynom', 'dni']);
+
+        if ($search !== '') {
+            $query->where(function ($w) use ($search) {
+                $w->where('dni', 'like', "%{$search}%")
+                  ->orWhere('apynom', 'like', "%{$search}%");
+            });
+        }
+
+        $paginator = $query->orderBy('apynom')->orderBy('dni')->paginate($perPage)->appends($request->query());
+
+        // IDs de socios asignados al profesor
+        $asignados = \DB::table('professor_socio')
+            ->where('professor_id', $professorId)
+            ->pluck('socio_id')
+            ->toArray();
+
+        $data = $paginator->getCollection()->map(function ($item) use ($asignados) {
+            return [
+                'id' => (int) $item->id,
+                'apynom' => $item->apynom,
+                'dni' => $item->dni,
+                'is_assigned_to_professor' => in_array($item->id, $asignados),
+                'can_view' => true,
+                'can_edit_progress' => false,
+                'can_assign_routine' => false,
+            ];
+        });
+
+        $paginator->setCollection($data);
+
+
+        return response()->json([
+            'ok' => true,
+            'data' => $paginator,
+        ]);
+    }
+
     public function __construct(
         private AssignmentService $assignmentService
     ) {}
