@@ -187,11 +187,10 @@ Route::middleware('auth:sanctum')->group(function () {
         // Auto-asignación de socios (alias en español)
         Route::get('socios', [\App\Http\Controllers\Profesor\SocioController::class, 'index']);
         Route::get('socios/disponibles', [\App\Http\Controllers\Profesor\SocioController::class, 'disponibles']);
+        // NUEVO: Endpoint de lectura ampliada de socios (debe ir antes de las rutas dinámicas)
+        Route::get('socios/todos', [\App\Http\Controllers\Gym\Professor\AssignmentController::class, 'allStudents']);
         Route::post('socios/{socio}', [\App\Http\Controllers\Profesor\SocioController::class, 'store']);
         Route::delete('socios/{socio}', [\App\Http\Controllers\Profesor\SocioController::class, 'destroy']);
-
-        // NUEVO: Endpoint de lectura ampliada de socios
-        Route::get('socios/todos', [\App\Http\Controllers\Gym\Professor\AssignmentController::class, 'allStudents']);
     });
 
     // Estudiantes
