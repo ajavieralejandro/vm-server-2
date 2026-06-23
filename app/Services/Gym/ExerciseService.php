@@ -333,47 +333,157 @@ class ExerciseService
 
     public function getMeta(): array
     {
-        return Cache::remember('exercise_meta', 1800, function () {
-            $types = collect(config('gym_exercises.types', []))
-                ->map(fn ($label, $value) => ['value' => $value, 'label' => $label])
-                ->values()
-                ->all();
+        $meta = Cache::remember('exercise_meta_v2', 1800, fn () => $this->buildMeta());
 
-            $categories = collect(config('gym_exercises.categories', []))
-                ->map(function ($items, $type) {
-                    return collect($items)
-                        ->map(fn ($label, $value) => ['value' => $value, 'label' => $label])
-                        ->values()
-                        ->all();
-                })
-                ->all();
+        if (empty($meta['types']) || empty($meta['categories'])) {
+            Cache::forget('exercise_meta');
+            Cache::forget('exercise_meta_v2');
+            $meta = $this->buildMeta();
+            Cache::put('exercise_meta_v2', $meta, 1800);
+        }
 
-            $configTags = collect(config('gym_exercises.tags', []));
-            $dbTags = Exercise::query()
-                ->whereNotNull('tags')
-                ->pluck('tags')
-                ->flatten()
-                ->filter()
-                ->unique()
-                ->values();
+        return $meta;
+    }
 
-            $tags = $configTags
-                ->merge($dbTags)
-                ->unique()
-                ->sortBy(fn ($tag) => Str::lower((string) $tag))
-                ->values()
-                ->map(fn ($tag) => [
-                    'value' => $tag,
-                    'label' => Str::title(str_replace('_', ' ', (string) $tag)),
-                ])
-                ->all();
+    private function buildMeta(): array
+    {
+        $types = collect($this->domainTypes())
+            ->map(fn ($label, $value) => ['value' => $value, 'label' => $label])
+            ->values()
+            ->all();
 
-            return [
-                'types' => $types,
-                'categories' => $categories,
-                'tags' => $tags,
-            ];
-        });
+        $categories = collect($this->domainCategories())
+            ->map(function ($items, $type) {
+                return collect($items)
+                    ->map(fn ($label, $value) => ['value' => $value, 'label' => $label])
+                    ->values()
+                    ->all();
+            })
+            ->all();
+
+        $configTags = collect($this->domainTags());
+        $dbTags = Exercise::query()
+            ->whereNotNull('tags')
+            ->pluck('tags')
+            ->flatten()
+            ->filter()
+            ->unique()
+            ->values();
+
+        $tags = $configTags
+            ->merge($dbTags)
+            ->unique()
+            ->sortBy(fn ($tag) => Str::lower((string) $tag))
+            ->values()
+            ->map(fn ($tag) => [
+                'value' => $tag,
+                'label' => Str::title(str_replace('_', ' ', (string) $tag)),
+            ])
+            ->all();
+
+        return [
+            'types' => $types,
+            'categories' => $categories,
+            'tags' => $tags,
+        ];
+    }
+
+    /**
+     * @return array<string, string>
+     */
+    private function domainTypes(): array
+    {
+        $types = config('gym_exercises.types', []);
+
+        return ! empty($types) ? $types : self::fallbackTypes();
+    }
+
+    /**
+     * @return array<string, array<string, string>>
+     */
+    private function domainCategories(): array
+    {
+        $categories = config('gym_exercises.categories', []);
+
+        return ! empty($categories) ? $categories : self::fallbackCategories();
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function domainTags(): array
+    {
+        $tags = config('gym_exercises.tags', []);
+
+        return ! empty($tags) ? $tags : self::fallbackTags();
+    }
+
+    /**
+     * @return array<string, string>
+     */
+    private static function fallbackTypes(): array
+    {
+        return [
+            'fuerza' => 'Fuerza',
+            'movilidad' => 'Movilidad',
+            'estabilidad' => 'Estabilidad',
+            'resistencia' => 'Resistencia',
+        ];
+    }
+
+    /**
+     * @return array<string, array<string, string>>
+     */
+    private static function fallbackCategories(): array
+    {
+        return [
+            'fuerza' => [
+                'dominante_rodilla' => 'Dominante de rodilla',
+                'dominante_cadera' => 'Dominante de cadera',
+                'empuje_vertical_horizontal' => 'Empuje vertical/horizontal',
+                'traccion_vertical_horizontal' => 'Tracción vertical/horizontal',
+                'saltos' => 'Saltos',
+                'dinamicos' => 'Dinámicos',
+                'accesorios_mmss' => 'Accesorios MMSS / miembros superiores',
+                'accesorios_mmii' => 'Accesorios MMII / miembros inferiores',
+                'lanzamiento' => 'Lanzamiento',
+            ],
+            'movilidad' => [
+                'miembro_superior' => 'Miembro superior',
+                'miembro_inferior' => 'Miembro inferior',
+            ],
+            'estabilidad' => [
+                'anti_extension' => 'Anti extensión',
+                'anti_flexion' => 'Anti flexión',
+                'anti_rotacion' => 'Anti rotación',
+                'anti_flexion_lateral' => 'Anti flexión lateral',
+            ],
+            'resistencia' => [
+                'carrera' => 'Carrera',
+                'bicicleta' => 'Bicicleta',
+                'remo' => 'Remo',
+                'escaladora' => 'Escaladora',
+            ],
+        ];
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private static function fallbackTags(): array
+    {
+        return [
+            'tren_superior',
+            'tren_inferior',
+            'core',
+            'principiante',
+            'intermedio',
+            'avanzado',
+            'tecnica',
+            'potencia',
+            'movilidad',
+            'rehabilitacion',
+        ];
     }
 
     public function getExerciseStats(): array
@@ -463,6 +573,7 @@ class ExerciseService
         Cache::forget('exercise_stats');
         Cache::forget('exercise_filter_options');
         Cache::forget('exercise_meta');
+        Cache::forget('exercise_meta_v2');
 
         for ($i = 1; $i <= 20; $i++) {
             Cache::forget("most_used_exercises_{$i}");

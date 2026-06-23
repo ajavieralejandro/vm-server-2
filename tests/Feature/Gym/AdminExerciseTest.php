@@ -174,19 +174,30 @@ class AdminExerciseTest extends TestCase
 
     public function test_meta_endpoint_returns_types_categories_and_tags(): void
     {
-        $this->actingAs($this->professor())
+        $response = $this->actingAs($this->professor())
             ->getJson('/api/admin/gym/exercises/meta')
             ->assertStatus(200)
-            ->assertJsonPath('ok', true)
-            ->assertJsonStructure([
-                'data' => [
-                    'types' => [['value', 'label']],
-                    'categories' => [
-                        'fuerza' => [['value', 'label']],
-                    ],
-                    'tags' => [['value', 'label']],
-                ],
-            ]);
+            ->assertJsonPath('ok', true);
+
+        $data = $response->json('data');
+
+        $this->assertNotEmpty($data['types'], 'types no debe estar vacío');
+        $this->assertCount(4, $data['types']);
+        $this->assertSame('fuerza', $data['types'][0]['value']);
+        $this->assertSame('Fuerza', $data['types'][0]['label']);
+
+        $this->assertNotEmpty($data['categories'], 'categories no debe estar vacío');
+        $this->assertArrayHasKey('fuerza', $data['categories']);
+        $this->assertNotEmpty($data['categories']['fuerza']);
+        $this->assertSame('dominante_rodilla', $data['categories']['fuerza'][0]['value']);
+
+        $this->assertArrayHasKey('movilidad', $data['categories']);
+        $this->assertArrayHasKey('estabilidad', $data['categories']);
+        $this->assertArrayHasKey('resistencia', $data['categories']);
+
+        $this->assertNotEmpty($data['tags'], 'tags no debe estar vacío');
+        $this->assertArrayHasKey('value', $data['tags'][0]);
+        $this->assertArrayHasKey('label', $data['tags'][0]);
     }
 
     public function test_student_cannot_create_exercise(): void
