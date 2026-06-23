@@ -95,18 +95,19 @@ Route::middleware(['auth:sanctum', 'admin'])->prefix('admin')->group(function ()
 // ==================== PANEL DE GIMNASIO ====================
 Route::middleware(['auth:sanctum', 'professor'])->prefix('admin/gym')->group(function () {
     
-    // Ejercicios
+    // Ejercicios — rutas consolidadas aquí (antes duplicadas parcialmente en routes/api.php)
     Route::prefix('exercises')->group(function () {
+        Route::get('/meta', [ExerciseController::class, 'meta'])->name('admin.gym.exercises.meta');
+        Route::post('/bulk-delete', [ExerciseController::class, 'bulkDelete'])->name('admin.gym.exercises.bulk-delete');
         Route::get('/', [ExerciseController::class, 'index'])->name('admin.gym.exercises.index');
         Route::post('/', [ExerciseController::class, 'store'])->name('admin.gym.exercises.store');
-        Route::get('/{exercise}', [ExerciseController::class, 'show'])->name('admin.gym.exercises.show');
-        Route::put('/{exercise}', [ExerciseController::class, 'update'])->name('admin.gym.exercises.update');
-        Route::delete('/{exercise}', [ExerciseController::class, 'destroy'])->name('admin.gym.exercises.destroy');
-        Route::post('/{exercise}/duplicate', [ExerciseController::class, 'duplicate'])->name('admin.gym.exercises.duplicate');
-        
-        // Nuevos endpoints para manejo mejorado de eliminación
         Route::get('/{exercise}/dependencies', [ExerciseController::class, 'checkDependencies'])->name('admin.gym.exercises.dependencies');
         Route::delete('/{exercise}/force', [ExerciseController::class, 'forceDestroy'])->name('admin.gym.exercises.force-destroy');
+        Route::post('/{exercise}/duplicate', [ExerciseController::class, 'duplicate'])->name('admin.gym.exercises.duplicate');
+        Route::get('/{exercise}', [ExerciseController::class, 'show'])->name('admin.gym.exercises.show');
+        Route::put('/{exercise}', [ExerciseController::class, 'update'])->name('admin.gym.exercises.update');
+        Route::patch('/{exercise}', [ExerciseController::class, 'update']);
+        Route::delete('/{exercise}', [ExerciseController::class, 'destroy'])->name('admin.gym.exercises.destroy');
     });
     
     // Plantillas Diarias

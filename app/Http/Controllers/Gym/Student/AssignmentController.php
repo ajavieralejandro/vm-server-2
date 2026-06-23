@@ -164,10 +164,15 @@ class AssignmentController extends Controller
                             'id' => $templateExercise->exercise ? $templateExercise->exercise->id : null,
                             'name' => $templateExercise->exercise ? $templateExercise->exercise->name : null,
                             'description' => $templateExercise->exercise ? $templateExercise->exercise->description : null,
+                            'exercise_type' => $templateExercise->exercise ? $templateExercise->exercise->exercise_type : null,
+                            'exercise_type_label' => $templateExercise->exercise ? $templateExercise->exercise->exercise_type_label : null,
+                            'category' => $templateExercise->exercise ? $templateExercise->exercise->category : null,
+                            'category_label' => $templateExercise->exercise ? $templateExercise->exercise->category_label : null,
+                            'video_url' => $templateExercise->exercise ? $templateExercise->exercise->video_url : null,
                             'target_muscle_groups' => $templateExercise->exercise ? $templateExercise->exercise->target_muscle_groups : null,
                             'equipment' => $templateExercise->exercise ? $templateExercise->exercise->equipment : null,
                             'difficulty_level' => $templateExercise->exercise ? $templateExercise->exercise->difficulty_level : null,
-                            'instructions' => $templateExercise->exercise ? $templateExercise->exercise->instructions : null
+                            'instructions' => $templateExercise->exercise ? $templateExercise->exercise->instructions : null,
                         ],
                         'sets' => $templateExercise->sets->map(function ($set) {
                             return [

@@ -6,7 +6,6 @@ use App\Http\Controllers\AuthController;
 use App\Http\Controllers\UserController;
 use App\Http\Controllers\PromotionController;
 
-use App\Http\Controllers\Gym\Admin\ExerciseController as GymExerciseController;
 use App\Http\Controllers\Gym\Admin\DailyTemplateController as GymDailyTemplateController;
 use App\Http\Controllers\Gym\Admin\WeeklyTemplateController as GymWeeklyTemplateController;
 use App\Http\Controllers\Gym\Admin\WeeklyAssignmentController as GymWeeklyAssignmentController;
@@ -133,9 +132,8 @@ Route::middleware('auth:sanctum')->group(function () {
     });
 
     // Admin Gym (protegido por rol 'professor')
+    // Nota: rutas de ejercicios consolidadas en routes/admin.php
     Route::prefix('admin/gym')->middleware('professor')->group(function () {
-        Route::post('exercises/bulk-delete', [GymExerciseController::class, 'bulkDelete']);
-        Route::apiResource('exercises', GymExerciseController::class);
         Route::apiResource('daily-templates', GymDailyTemplateController::class);
         Route::apiResource('weekly-templates', GymWeeklyTemplateController::class);
         Route::apiResource('weekly-assignments', GymWeeklyAssignmentController::class)
