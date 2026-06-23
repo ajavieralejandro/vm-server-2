@@ -2,7 +2,9 @@
 
 namespace App\Http\Requests\Gym;
 
+use App\Support\Gym\ExerciseDomainConfig;
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
 use Illuminate\Validation\Validator;
 
 class ExerciseRequest extends FormRequest
@@ -17,13 +19,12 @@ class ExerciseRequest extends FormRequest
     public function rules(): array
     {
         $isUpdate = $this->isMethod('PUT') || $this->isMethod('PATCH');
-        $typeKeys = implode(',', array_keys(config('gym_exercises.types', [])));
-
         $required = $isUpdate ? 'sometimes' : 'required';
+        $types = ExerciseDomainConfig::typeSlugs();
 
         return [
             'name' => [$required, 'string', 'min:3', 'max:255'],
-            'exercise_type' => [$required, 'string', 'in:'.$typeKeys],
+            'exercise_type' => [$required, 'string', Rule::in($types)],
             'category' => [$required, 'string', 'max:100'],
             'description' => 'nullable|string',
             'instructions' => 'nullable|string',
@@ -51,9 +52,18 @@ class ExerciseRequest extends FormRequest
                 return;
             }
 
-            $allowed = array_keys(config("gym_exercises.categories.{$type}", []));
+            $allowedCategories = ExerciseDomainConfig::categorySlugsForType($type);
 
-            if (! in_array($category, $allowed, true)) {
+            if (app()->environment('local')) {
+                logger()->debug('Exercise validation domain', [
+                    'types' => ExerciseDomainConfig::typeSlugs(),
+                    'type' => $type,
+                    'category' => $category,
+                    'allowed_categories' => $allowedCategories,
+                ]);
+            }
+
+            if (! in_array($category, $allowedCategories, true)) {
                 $validator->errors()->add(
                     'category',
                     'La categoría seleccionada no corresponde al tipo de ejercicio indicado.'

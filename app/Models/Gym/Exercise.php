@@ -3,6 +3,7 @@
 namespace App\Models\Gym;
 
 use App\Models\User;
+use App\Support\Gym\ExerciseDomainConfig;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
@@ -70,7 +71,7 @@ class Exercise extends Model
             return null;
         }
 
-        return config("gym_exercises.types.{$this->exercise_type}");
+        return ExerciseDomainConfig::typeLabel($this->exercise_type);
     }
 
     public function getCategoryLabelAttribute(): ?string
@@ -79,6 +80,6 @@ class Exercise extends Model
             return null;
         }
 
-        return config("gym_exercises.categories.{$this->exercise_type}.{$this->category}");
+        return ExerciseDomainConfig::categoryLabel($this->exercise_type, $this->category);
     }
 }

@@ -287,4 +287,68 @@ class AdminExerciseTest extends TestCase
             ->assertOk()
             ->assertJsonPath('message', 'Ejercicio eliminado correctamente');
     }
+
+    public function test_accepts_estabilidad_anti_flexion(): void
+    {
+        $this->actingAs($this->professor())
+            ->postJson('/api/admin/gym/exercises', [
+                'name' => 'Plancha anti flexión',
+                'exercise_type' => 'estabilidad',
+                'category' => 'anti_flexion',
+                'is_active' => true,
+            ])
+            ->assertStatus(201)
+            ->assertJsonPath('data.exercise_type', 'estabilidad')
+            ->assertJsonPath('data.category', 'anti_flexion');
+    }
+
+    public function test_accepts_fuerza_accesorios_mmii(): void
+    {
+        $this->actingAs($this->professor())
+            ->postJson('/api/admin/gym/exercises', [
+                'name' => 'Accesorio MMII test',
+                'exercise_type' => 'fuerza',
+                'category' => 'accesorios_mmii',
+                'is_active' => true,
+            ])
+            ->assertStatus(201)
+            ->assertJsonPath('data.exercise_type', 'fuerza')
+            ->assertJsonPath('data.category', 'accesorios_mmii');
+    }
+
+    public function test_rejects_invalid_category_for_type(): void
+    {
+        $this->actingAs($this->professor())
+            ->postJson('/api/admin/gym/exercises', [
+                'name' => 'Categoría inválida',
+                'exercise_type' => 'fuerza',
+                'category' => 'anti_flexion',
+                'is_active' => true,
+            ])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors(['category']);
+    }
+
+    public function test_meta_and_validation_are_consistent(): void
+    {
+        $this->actingAs($this->professor());
+
+        $meta = $this->getJson('/api/admin/gym/exercises/meta')
+            ->assertStatus(200)
+            ->json('data');
+
+        $this->assertNotEmpty($meta['categories']['estabilidad']);
+
+        $category = $meta['categories']['estabilidad'][0]['value'];
+
+        $this->postJson('/api/admin/gym/exercises', [
+            'name' => 'Ejercicio meta consistente',
+            'exercise_type' => 'estabilidad',
+            'category' => $category,
+            'is_active' => true,
+        ])
+            ->assertStatus(201)
+            ->assertJsonPath('data.exercise_type', 'estabilidad')
+            ->assertJsonPath('data.category', $category);
+    }
 }

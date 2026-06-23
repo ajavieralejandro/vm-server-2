@@ -3,6 +3,7 @@
 namespace App\Services\Gym;
 
 use App\Models\Gym\Exercise;
+use App\Support\Gym\ExerciseDomainConfig;
 use App\Services\Core\AuditService;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Collection;
@@ -347,12 +348,12 @@ class ExerciseService
 
     private function buildMeta(): array
     {
-        $types = collect($this->domainTypes())
+        $types = collect(ExerciseDomainConfig::types())
             ->map(fn ($label, $value) => ['value' => $value, 'label' => $label])
             ->values()
             ->all();
 
-        $categories = collect($this->domainCategories())
+        $categories = collect(ExerciseDomainConfig::categories())
             ->map(function ($items, $type) {
                 return collect($items)
                     ->map(fn ($label, $value) => ['value' => $value, 'label' => $label])
@@ -361,7 +362,7 @@ class ExerciseService
             })
             ->all();
 
-        $configTags = collect($this->domainTags());
+        $configTags = collect(ExerciseDomainConfig::tags());
         $dbTags = Exercise::query()
             ->whereNotNull('tags')
             ->pluck('tags')
@@ -385,104 +386,6 @@ class ExerciseService
             'types' => $types,
             'categories' => $categories,
             'tags' => $tags,
-        ];
-    }
-
-    /**
-     * @return array<string, string>
-     */
-    private function domainTypes(): array
-    {
-        $types = config('gym_exercises.types', []);
-
-        return ! empty($types) ? $types : self::fallbackTypes();
-    }
-
-    /**
-     * @return array<string, array<string, string>>
-     */
-    private function domainCategories(): array
-    {
-        $categories = config('gym_exercises.categories', []);
-
-        return ! empty($categories) ? $categories : self::fallbackCategories();
-    }
-
-    /**
-     * @return array<int, string>
-     */
-    private function domainTags(): array
-    {
-        $tags = config('gym_exercises.tags', []);
-
-        return ! empty($tags) ? $tags : self::fallbackTags();
-    }
-
-    /**
-     * @return array<string, string>
-     */
-    private static function fallbackTypes(): array
-    {
-        return [
-            'fuerza' => 'Fuerza',
-            'movilidad' => 'Movilidad',
-            'estabilidad' => 'Estabilidad',
-            'resistencia' => 'Resistencia',
-        ];
-    }
-
-    /**
-     * @return array<string, array<string, string>>
-     */
-    private static function fallbackCategories(): array
-    {
-        return [
-            'fuerza' => [
-                'dominante_rodilla' => 'Dominante de rodilla',
-                'dominante_cadera' => 'Dominante de cadera',
-                'empuje_vertical_horizontal' => 'Empuje vertical/horizontal',
-                'traccion_vertical_horizontal' => 'Tracción vertical/horizontal',
-                'saltos' => 'Saltos',
-                'dinamicos' => 'Dinámicos',
-                'accesorios_mmss' => 'Accesorios MMSS / miembros superiores',
-                'accesorios_mmii' => 'Accesorios MMII / miembros inferiores',
-                'lanzamiento' => 'Lanzamiento',
-            ],
-            'movilidad' => [
-                'miembro_superior' => 'Miembro superior',
-                'miembro_inferior' => 'Miembro inferior',
-            ],
-            'estabilidad' => [
-                'anti_extension' => 'Anti extensión',
-                'anti_flexion' => 'Anti flexión',
-                'anti_rotacion' => 'Anti rotación',
-                'anti_flexion_lateral' => 'Anti flexión lateral',
-            ],
-            'resistencia' => [
-                'carrera' => 'Carrera',
-                'bicicleta' => 'Bicicleta',
-                'remo' => 'Remo',
-                'escaladora' => 'Escaladora',
-            ],
-        ];
-    }
-
-    /**
-     * @return array<int, string>
-     */
-    private static function fallbackTags(): array
-    {
-        return [
-            'tren_superior',
-            'tren_inferior',
-            'core',
-            'principiante',
-            'intermedio',
-            'avanzado',
-            'tecnica',
-            'potencia',
-            'movilidad',
-            'rehabilitacion',
         ];
     }
 
