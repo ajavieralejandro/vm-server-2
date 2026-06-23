@@ -3,11 +3,13 @@
 namespace App\Services\Gym;
 
 use App\Models\Gym\Exercise;
+use App\Support\Gym\ExerciseDomainConfig;
 use App\Services\Core\AuditService;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 
 class ExerciseService
 {
@@ -15,48 +17,59 @@ class ExerciseService
         private AuditService $auditService
     ) {}
 
-    /**
-     * Obtener ejercicios con filtros avanzados
-     */
     public function getFilteredExercises(array $filters, int $perPage = 20): LengthAwarePaginator
     {
         $query = Exercise::query();
 
-        // Filtro por búsqueda de texto
-        if (!empty($filters['search'])) {
+        if (! empty($filters['search'])) {
             $search = $filters['search'];
             $query->where(function ($q) use ($search) {
                 $q->where('name', 'like', "%{$search}%")
-                  ->orWhere('description', 'like', "%{$search}%")
-                  ->orWhere('instructions', 'like', "%{$search}%")
-                  ->orWhereJsonContains('tags', $search);
+                    ->orWhere('description', 'like', "%{$search}%")
+                    ->orWhere('instructions', 'like', "%{$search}%")
+                    ->orWhereJsonContains('tags', $search);
             });
         }
 
-        // Filtro por grupos musculares
-        if (!empty($filters['muscle_groups'])) {
-            $muscleGroups = is_array($filters['muscle_groups']) 
-                ? $filters['muscle_groups'] 
+        if (! empty($filters['exercise_type'])) {
+            $types = is_array($filters['exercise_type'])
+                ? $filters['exercise_type']
+                : [$filters['exercise_type']];
+            $query->whereIn('exercise_type', $types);
+        }
+
+        if (! empty($filters['category'])) {
+            $categories = is_array($filters['category'])
+                ? $filters['category']
+                : [$filters['category']];
+            $query->whereIn('category', $categories);
+        }
+
+        if (array_key_exists('is_active', $filters) && $filters['is_active'] !== null && $filters['is_active'] !== '') {
+            $query->where('is_active', filter_var($filters['is_active'], FILTER_VALIDATE_BOOLEAN));
+        }
+
+        if (! empty($filters['muscle_groups'])) {
+            $muscleGroups = is_array($filters['muscle_groups'])
+                ? $filters['muscle_groups']
                 : [$filters['muscle_groups']];
-            
+
             foreach ($muscleGroups as $group) {
                 $query->whereJsonContains('muscle_groups', $group);
             }
         }
 
-        // Filtro por músculos objetivo
-        if (!empty($filters['target_muscle_groups'])) {
-            $targetMuscleGroups = is_array($filters['target_muscle_groups']) 
-                ? $filters['target_muscle_groups'] 
+        if (! empty($filters['target_muscle_groups'])) {
+            $targetMuscleGroups = is_array($filters['target_muscle_groups'])
+                ? $filters['target_muscle_groups']
                 : [$filters['target_muscle_groups']];
-            
+
             foreach ($targetMuscleGroups as $group) {
                 $query->whereJsonContains('target_muscle_groups', $group);
             }
         }
 
-        // Filtro por nivel de dificultad
-        if (!empty($filters['difficulty_level'])) {
+        if (! empty($filters['difficulty_level'])) {
             if (is_array($filters['difficulty_level'])) {
                 $query->whereIn('difficulty_level', $filters['difficulty_level']);
             } else {
@@ -64,30 +77,35 @@ class ExerciseService
             }
         }
 
-        // Filtro por equipamiento (ahora es string, no array)
-        if (!empty($filters['equipment'])) {
+        if (! empty($filters['equipment'])) {
             $query->where('equipment', 'like', "%{$filters['equipment']}%");
         }
 
-        // Filtro por patrón de movimiento
-        if (!empty($filters['movement_pattern'])) {
+        if (! empty($filters['movement_pattern'])) {
             $query->where('movement_pattern', 'like', "%{$filters['movement_pattern']}%");
         }
 
-        // Filtro por tags
-        if (!empty($filters['tags'])) {
+        if (! empty($filters['tags'])) {
             $tags = is_array($filters['tags']) ? $filters['tags'] : [$filters['tags']];
             foreach ($tags as $tag) {
                 $query->whereJsonContains('tags', $tag);
             }
         }
 
-        // Ordenamiento
         $sortBy = $filters['sort_by'] ?? 'name';
         $sortDirection = $filters['sort_direction'] ?? 'asc';
-        
-        $allowedSorts = ['name', 'difficulty_level', 'movement_pattern', 'created_at', 'updated_at'];
-        if (in_array($sortBy, $allowedSorts)) {
+
+        $allowedSorts = [
+            'name',
+            'exercise_type',
+            'category',
+            'difficulty_level',
+            'movement_pattern',
+            'created_at',
+            'updated_at',
+        ];
+
+        if (in_array($sortBy, $allowedSorts, true)) {
             $query->orderBy($sortBy, $sortDirection);
         } else {
             $query->orderBy('name', 'asc');
@@ -96,66 +114,37 @@ class ExerciseService
         return $query->paginate($perPage);
     }
 
-    /**
-     * Crear un nuevo ejercicio
-     */
     public function createExercise(array $data, $user): Exercise
     {
         return DB::transaction(function () use ($data, $user) {
-            $exercise = Exercise::create([
-                'name' => $data['name'],
-                'description' => $data['description'] ?? null,
-                'muscle_groups' => $data['muscle_groups'] ?? null,
-                'target_muscle_groups' => $data['target_muscle_groups'] ?? null,
-                'movement_pattern' => $data['movement_pattern'] ?? null,
-                'equipment' => $data['equipment'] ?? null,
-                'difficulty_level' => $data['difficulty_level'] ?? null,
-                'tags' => $data['tags'] ?? [],
-                'instructions' => $data['instructions'] ?? null,
-            ]);
+            $exercise = Exercise::create($this->buildExercisePayload($data, $user));
 
-            // Auditoría
             $this->auditService->log(
                 action: 'create',
                 resourceType: 'exercise',
                 resourceId: $exercise->id,
                 details: [
                     'exercise_name' => $exercise->name,
-                    'difficulty_level' => $exercise->difficulty_level,
-                    'muscle_groups' => $exercise->muscle_groups,
+                    'exercise_type' => $exercise->exercise_type,
+                    'category' => $exercise->category,
                 ],
                 severity: 'low',
                 category: 'gym'
             );
 
-            // Limpiar cache
             $this->clearExerciseCache();
 
-            return $exercise;
+            return $exercise->fresh();
         });
     }
 
-    /**
-     * Actualizar un ejercicio
-     */
     public function updateExercise(Exercise $exercise, array $data, $user): Exercise
     {
         return DB::transaction(function () use ($exercise, $data, $user) {
             $oldValues = $exercise->toArray();
 
-            $exercise->update([
-                'name' => $data['name'] ?? $exercise->name,
-                'description' => $data['description'] ?? $exercise->description,
-                'muscle_groups' => $data['muscle_groups'] ?? $exercise->muscle_groups,
-                'target_muscle_groups' => $data['target_muscle_groups'] ?? $exercise->target_muscle_groups,
-                'movement_pattern' => $data['movement_pattern'] ?? $exercise->movement_pattern,
-                'equipment' => $data['equipment'] ?? $exercise->equipment,
-                'difficulty_level' => $data['difficulty_level'] ?? $exercise->difficulty_level,
-                'tags' => $data['tags'] ?? $exercise->tags,
-                'instructions' => $data['instructions'] ?? $exercise->instructions,
-            ]);
+            $exercise->update($this->buildExercisePayload($data, $user, $exercise));
 
-            // Auditoría
             $this->auditService->log(
                 action: 'update',
                 resourceType: 'exercise',
@@ -170,45 +159,36 @@ class ExerciseService
                 category: 'gym'
             );
 
-            // Limpiar cache
             $this->clearExerciseCache();
 
-            return $exercise;
+            return $exercise->fresh();
         });
     }
 
-    /**
-     * Verificar dependencias de un ejercicio
-     */
     public function checkExerciseDependencies(Exercise $exercise): array
     {
         $dependencies = [
             'daily_templates' => $exercise->dailyTemplateExercises()->count(),
-            // Agregar otras dependencias futuras aquí
         ];
-        
+
         $canDelete = array_sum($dependencies) === 0;
-        
+
         return [
             'can_delete' => $canDelete,
             'dependencies' => $dependencies,
             'total_references' => array_sum($dependencies),
             'exercise' => [
                 'id' => $exercise->id,
-                'name' => $exercise->name
-            ]
+                'name' => $exercise->name,
+            ],
         ];
     }
 
-    /**
-     * Eliminar un ejercicio con validación de dependencias
-     */
     public function deleteExercise(Exercise $exercise, $user): array
     {
-        // Verificar dependencias antes de intentar eliminar
         $dependencies = $this->checkExerciseDependencies($exercise);
-        
-        if (!$dependencies['can_delete']) {
+
+        if (! $dependencies['can_delete']) {
             return [
                 'success' => false,
                 'error' => 'EXERCISE_IN_USE',
@@ -216,15 +196,14 @@ class ExerciseService
                 'details' => [
                     'templates_count' => $dependencies['dependencies']['daily_templates'],
                     'exercise_id' => $exercise->id,
-                    'exercise_name' => $exercise->name
+                    'exercise_name' => $exercise->name,
                 ],
-                'status_code' => 422
+                'status_code' => 422,
             ];
         }
 
-        return DB::transaction(function () use ($exercise, $user) {
+        return DB::transaction(function () use ($exercise) {
             try {
-                // Auditoría antes de eliminar
                 $this->auditService->log(
                     action: 'delete',
                     resourceType: 'exercise',
@@ -238,14 +217,12 @@ class ExerciseService
                 );
 
                 $exercise->delete();
-
-                // Limpiar cache
                 $this->clearExerciseCache();
 
                 return [
                     'success' => true,
                     'message' => 'Ejercicio eliminado correctamente',
-                    'status_code' => 200
+                    'status_code' => 200,
                 ];
             } catch (\Exception $e) {
                 return [
@@ -254,41 +231,34 @@ class ExerciseService
                     'message' => 'Error al eliminar el ejercicio',
                     'details' => [
                         'exercise_id' => $exercise->id,
-                        'exercise_name' => $exercise->name
+                        'exercise_name' => $exercise->name,
                     ],
-                    'status_code' => 500
+                    'status_code' => 500,
                 ];
             }
         });
     }
 
-    /**
-     * Eliminación forzada de ejercicio (solo para admins)
-     * Elimina el ejercicio y TODAS las plantillas que lo usan (desasignándolas automáticamente)
-     */
     public function forceDeleteExercise(Exercise $exercise, $user): array
     {
-        // Verificar permisos
-        if (!$user->is_admin) {
+        if (! $user->is_admin) {
             return [
                 'success' => false,
                 'error' => 'INSUFFICIENT_PERMISSIONS',
                 'message' => 'No tienes permisos para realizar eliminación forzada',
-                'status_code' => 403
+                'status_code' => 403,
             ];
         }
 
-        return DB::transaction(function () use ($exercise, $user) {
+        return DB::transaction(function () use ($exercise) {
             try {
-                // Obtener IDs de plantillas afectadas ANTES de eliminar
                 $affectedTemplateIds = $exercise->dailyTemplateExercises()
                     ->pluck('daily_template_id')
                     ->unique()
                     ->toArray();
-                
+
                 $templatesCount = count($affectedTemplateIds);
-                
-                // Auditoría antes de eliminar
+
                 $this->auditService->log(
                     action: 'force_delete',
                     resourceType: 'exercise',
@@ -297,29 +267,27 @@ class ExerciseService
                         'exercise_name' => $exercise->name,
                         'reason' => 'Force delete - admin override',
                         'templates_deleted' => $templatesCount,
-                        'affected_template_ids' => $affectedTemplateIds
+                        'affected_template_ids' => $affectedTemplateIds,
                     ],
                     severity: 'high',
                     category: 'gym'
                 );
 
-                // Eliminar las plantillas completas (cascade eliminará asignaciones)
                 if ($templatesCount > 0) {
                     \App\Models\Gym\DailyTemplate::whereIn('id', $affectedTemplateIds)->delete();
                 }
-                
-                // Luego eliminar el ejercicio
-                $exercise->delete();
 
-                // Limpiar cache
+                $exercise->delete();
                 $this->clearExerciseCache();
 
                 return [
                     'success' => true,
                     'message' => "Ejercicio eliminado correctamente. Se eliminaron {$templatesCount} plantilla(s) y sus asignaciones.",
-                    'warning' => $templatesCount > 0 ? "Esta acción eliminó {$templatesCount} plantilla(s) que usaban este ejercicio y las desasignó de todos los estudiantes." : null,
+                    'warning' => $templatesCount > 0
+                        ? "Esta acción eliminó {$templatesCount} plantilla(s) que usaban este ejercicio y las desasignó de todos los estudiantes."
+                        : null,
                     'deleted_templates_count' => $templatesCount,
-                    'status_code' => 200
+                    'status_code' => 200,
                 ];
             } catch (\Exception $e) {
                 return [
@@ -329,26 +297,22 @@ class ExerciseService
                     'details' => [
                         'exercise_id' => $exercise->id,
                         'exercise_name' => $exercise->name,
-                        'error_message' => $e->getMessage()
+                        'error_message' => $e->getMessage(),
                     ],
-                    'status_code' => 500
+                    'status_code' => 500,
                 ];
             }
         });
     }
 
-    /**
-     * Duplicar un ejercicio
-     */
     public function duplicateExercise(Exercise $exercise, $user): Exercise
     {
         return DB::transaction(function () use ($exercise, $user) {
             $duplicated = $exercise->replicate();
-            $duplicated->name = $exercise->name . ' (Copia)';
+            $duplicated->name = $exercise->name.' (Copia)';
             $duplicated->created_by = $user->id;
             $duplicated->save();
 
-            // Auditoría
             $this->auditService->log(
                 action: 'duplicate',
                 resourceType: 'exercise',
@@ -362,19 +326,80 @@ class ExerciseService
                 category: 'gym'
             );
 
-            return $duplicated;
+            $this->clearExerciseCache();
+
+            return $duplicated->fresh();
         });
     }
 
-    /**
-     * Obtener estadísticas de ejercicios
-     */
+    public function getMeta(): array
+    {
+        $meta = Cache::remember('exercise_meta_v2', 1800, fn () => $this->buildMeta());
+
+        if (empty($meta['types']) || empty($meta['categories'])) {
+            Cache::forget('exercise_meta');
+            Cache::forget('exercise_meta_v2');
+            $meta = $this->buildMeta();
+            Cache::put('exercise_meta_v2', $meta, 1800);
+        }
+
+        return $meta;
+    }
+
+    private function buildMeta(): array
+    {
+        $types = collect(ExerciseDomainConfig::types())
+            ->map(fn ($label, $value) => ['value' => $value, 'label' => $label])
+            ->values()
+            ->all();
+
+        $categories = collect(ExerciseDomainConfig::categories())
+            ->map(function ($items, $type) {
+                return collect($items)
+                    ->map(fn ($label, $value) => ['value' => $value, 'label' => $label])
+                    ->values()
+                    ->all();
+            })
+            ->all();
+
+        $configTags = collect(ExerciseDomainConfig::tags());
+        $dbTags = Exercise::query()
+            ->whereNotNull('tags')
+            ->pluck('tags')
+            ->flatten()
+            ->filter()
+            ->unique()
+            ->values();
+
+        $tags = $configTags
+            ->merge($dbTags)
+            ->unique()
+            ->sortBy(fn ($tag) => Str::lower((string) $tag))
+            ->values()
+            ->map(fn ($tag) => [
+                'value' => $tag,
+                'label' => Str::title(str_replace('_', ' ', (string) $tag)),
+            ])
+            ->all();
+
+        return [
+            'types' => $types,
+            'categories' => $categories,
+            'tags' => $tags,
+        ];
+    }
+
     public function getExerciseStats(): array
     {
         return Cache::remember('exercise_stats', 300, function () {
             return [
                 'total_exercises' => Exercise::count(),
                 'active_exercises' => Exercise::where('is_active', true)->count(),
+                'by_exercise_type' => Exercise::select('exercise_type', DB::raw('count(*) as count'))
+                    ->where('is_active', true)
+                    ->groupBy('exercise_type')
+                    ->pluck('count', 'exercise_type')
+                    ->toArray(),
                 'by_category' => Exercise::select('category', DB::raw('count(*) as count'))
                     ->where('is_active', true)
                     ->groupBy('category')
@@ -391,9 +416,6 @@ class ExerciseService
         });
     }
 
-    /**
-     * Obtener ejercicios más utilizados
-     */
     public function getMostUsedExercises(int $limit = 10): Collection
     {
         return Cache::remember("most_used_exercises_{$limit}", 600, function () use ($limit) {
@@ -406,41 +428,56 @@ class ExerciseService
         });
     }
 
-    /**
-     * Obtener opciones de filtros
-     */
     public function getFilterOptions(): array
     {
         return Cache::remember('exercise_filter_options', 1800, function () {
             $exercises = Exercise::where('is_active', true)->get();
-            
+
             return [
-                'categories' => $exercises->pluck('category')->unique()->sort()->values()->toArray(),
+                'exercise_types' => $exercises->pluck('exercise_type')->unique()->filter()->sort()->values()->toArray(),
+                'categories' => $exercises->pluck('category')->unique()->filter()->sort()->values()->toArray(),
                 'muscle_groups' => $exercises->pluck('muscle_groups')->flatten()->unique()->sort()->values()->toArray(),
-                'equipment' => $exercises->pluck('equipment')->flatten()->unique()->filter()->sort()->values()->toArray(),
-                'difficulty_levels' => [1, 2, 3, 4, 5],
+                'equipment' => $exercises->pluck('equipment')->unique()->filter()->sort()->values()->toArray(),
+                'difficulty_levels' => $exercises->pluck('difficulty_level')->unique()->filter()->sort()->values()->toArray(),
                 'tags' => $exercises->pluck('tags')->flatten()->unique()->filter()->sort()->values()->toArray(),
             ];
         });
     }
 
-    /**
-     * Obtener conteo de uso de un ejercicio
-     */
-    private function getExerciseUsageCount(Exercise $exercise): int
+    private function buildExercisePayload(array $data, $user, ?Exercise $existing = null): array
     {
-        return $exercise->dailyTemplateExercises()->count();
+        $payload = [
+            'name' => $data['name'] ?? $existing?->name,
+            'description' => array_key_exists('description', $data) ? $data['description'] : $existing?->description,
+            'exercise_type' => $data['exercise_type'] ?? $existing?->exercise_type,
+            'category' => $data['category'] ?? $existing?->category,
+            'muscle_groups' => array_key_exists('muscle_groups', $data) ? $data['muscle_groups'] : $existing?->muscle_groups,
+            'target_muscle_groups' => array_key_exists('target_muscle_groups', $data) ? $data['target_muscle_groups'] : $existing?->target_muscle_groups,
+            'movement_pattern' => array_key_exists('movement_pattern', $data) ? $data['movement_pattern'] : $existing?->movement_pattern,
+            'equipment' => array_key_exists('equipment', $data) ? $data['equipment'] : $existing?->equipment,
+            'difficulty_level' => array_key_exists('difficulty_level', $data) ? $data['difficulty_level'] : $existing?->difficulty_level,
+            'tags' => array_key_exists('tags', $data) ? ($data['tags'] ?? []) : ($existing?->tags ?? []),
+            'instructions' => array_key_exists('instructions', $data) ? $data['instructions'] : $existing?->instructions,
+            'video_url' => array_key_exists('video_url', $data) ? $data['video_url'] : $existing?->video_url,
+            'is_active' => array_key_exists('is_active', $data)
+                ? (bool) $data['is_active']
+                : ($existing?->is_active ?? true),
+        ];
+
+        if (! $existing) {
+            $payload['created_by'] = $user->id;
+        }
+
+        return $payload;
     }
 
-    /**
-     * Limpiar cache relacionado con ejercicios
-     */
     private function clearExerciseCache(): void
     {
         Cache::forget('exercise_stats');
         Cache::forget('exercise_filter_options');
-        
-        // Limpiar cache de ejercicios más usados
+        Cache::forget('exercise_meta');
+        Cache::forget('exercise_meta_v2');
+
         for ($i = 1; $i <= 20; $i++) {
             Cache::forget("most_used_exercises_{$i}");
         }

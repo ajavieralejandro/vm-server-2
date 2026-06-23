@@ -3,124 +3,134 @@
 namespace App\Http\Controllers\Gym\Admin;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Gym\ExerciseRequest;
+use App\Http\Resources\Gym\ExerciseResource;
 use App\Models\Gym\Exercise;
 use App\Services\Gym\ExerciseService;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
-use Illuminate\Http\Response;
 
 class ExerciseController extends Controller
 {
     public function __construct(
         private ExerciseService $exerciseService
     ) {}
-    public function index(Request $request)
+
+    public function index(Request $request): JsonResponse
     {
         $filters = $request->only([
-            'search', 'muscle_groups', 'target_muscle_groups',
+            'search', 'exercise_type', 'category', 'is_active',
+            'muscle_groups', 'target_muscle_groups',
             'equipment', 'difficulty_level', 'movement_pattern',
-            'tags', 'sort_by', 'sort_direction'
+            'tags', 'sort_by', 'sort_direction',
         ]);
-        
+
         $perPage = min($request->integer('per_page', 20), 100);
-        
         $exercises = $this->exerciseService->getFilteredExercises($filters, $perPage);
-        
-        return response()->json($exercises);
-    }
 
-    public function store(Request $request)
-    {
-        $data = $request->validate([
-            'name' => 'required|string|max:255',
-            'description' => 'nullable|string',
-            'muscle_groups' => 'nullable|array',
-            'muscle_groups.*' => 'string',
-            'target_muscle_groups' => 'nullable|array',
-            'target_muscle_groups.*' => 'string',
-            'movement_pattern' => 'nullable|string|max:255',
-            'equipment' => 'nullable|string|max:255',
-            'difficulty_level' => 'nullable|string|in:beginner,intermediate,advanced',
-            'exercise_type' => 'nullable|string', // Campo ignorado por ahora
-            'tags' => 'nullable|array',
-            'tags.*' => 'string',
-            'instructions' => 'nullable|string',
+        return response()->json([
+            'ok' => true,
+            'data' => ExerciseResource::collection($exercises->items()),
+            'meta' => [
+                'current_page' => $exercises->currentPage(),
+                'per_page' => $exercises->perPage(),
+                'total' => $exercises->total(),
+                'last_page' => $exercises->lastPage(),
+            ],
         ]);
-
-        $exercise = $this->exerciseService->createExercise($data, $request->user());
-        return response()->json($exercise, 201);
     }
 
-    public function show(Exercise $exercise)
+    public function meta(): JsonResponse
     {
-        return response()->json($exercise);
-    }
-
-    public function update(Request $request, Exercise $exercise)
-    {
-        $data = $request->validate([
-            'name' => 'sometimes|required|string|max:255',
-            'description' => 'nullable|string',
-            'muscle_groups' => 'nullable|array',
-            'muscle_groups.*' => 'string',
-            'target_muscle_groups' => 'nullable|array',
-            'target_muscle_groups.*' => 'string',
-            'movement_pattern' => 'nullable|string|max:255',
-            'equipment' => 'nullable|string|max:255',
-            'difficulty_level' => 'nullable|string|in:beginner,intermediate,advanced',
-            'tags' => 'nullable|array',
-            'tags.*' => 'string',
-            'instructions' => 'nullable|string',
+        return response()->json([
+            'ok' => true,
+            'data' => $this->exerciseService->getMeta(),
         ]);
-
-        $exercise = $this->exerciseService->updateExercise($exercise, $data, $request->user());
-        return response()->json($exercise);
     }
 
-    public function destroy(Exercise $exercise)
+    public function store(ExerciseRequest $request): JsonResponse
+    {
+        $exercise = $this->exerciseService->createExercise($request->validated(), $request->user());
+
+        return response()->json([
+            'ok' => true,
+            'data' => new ExerciseResource($exercise),
+            'message' => 'Ejercicio creado correctamente.',
+        ], 201);
+    }
+
+    public function show(Exercise $exercise): JsonResponse
+    {
+        return response()->json([
+            'ok' => true,
+            'data' => new ExerciseResource($exercise),
+        ]);
+    }
+
+    public function update(ExerciseRequest $request, Exercise $exercise): JsonResponse
+    {
+        $updated = $this->exerciseService->updateExercise($exercise, $request->validated(), $request->user());
+
+        return response()->json([
+            'ok' => true,
+            'data' => new ExerciseResource($updated),
+            'message' => 'Ejercicio actualizado correctamente.',
+        ]);
+    }
+
+    public function destroy(Exercise $exercise): JsonResponse
     {
         $result = $this->exerciseService->deleteExercise($exercise, auth()->user());
-        
-        if (!$result['success']) {
+
+        if (! $result['success']) {
             return response()->json([
+                'ok' => false,
                 'message' => $result['message'],
                 'error' => $result['error'],
-                'details' => $result['details'] ?? null
+                'details' => $result['details'] ?? null,
             ], $result['status_code']);
         }
-        
+
         return response()->json([
-            'message' => $result['message']
+            'ok' => true,
+            'message' => $result['message'],
         ], $result['status_code']);
     }
 
-    public function checkDependencies(Exercise $exercise)
+    public function checkDependencies(Exercise $exercise): JsonResponse
     {
-        $dependencies = $this->exerciseService->checkExerciseDependencies($exercise);
-        return response()->json($dependencies);
+        return response()->json([
+            'ok' => true,
+            'data' => $this->exerciseService->checkExerciseDependencies($exercise),
+        ]);
     }
 
-    public function forceDestroy(Exercise $exercise)
+    public function forceDestroy(Exercise $exercise): JsonResponse
     {
         $result = $this->exerciseService->forceDeleteExercise($exercise, auth()->user());
-        
-        if (!$result['success']) {
+
+        if (! $result['success']) {
             return response()->json([
+                'ok' => false,
                 'message' => $result['message'],
                 'error' => $result['error'],
-                'details' => $result['details'] ?? null
+                'details' => $result['details'] ?? null,
             ], $result['status_code']);
         }
-        
-        $response = ['message' => $result['message']];
+
+        $response = [
+            'ok' => true,
+            'message' => $result['message'],
+        ];
+
         if (isset($result['warning'])) {
             $response['warning'] = $result['warning'];
         }
-        
+
         return response()->json($response, $result['status_code']);
     }
 
-    public function bulkDelete(Request $request)
+    public function bulkDelete(Request $request): JsonResponse
     {
         $data = $request->validate([
             'ids' => 'required|array|min:1',
@@ -132,7 +142,9 @@ class ExerciseController extends Controller
 
         foreach ($data['ids'] as $id) {
             $exercise = Exercise::find($id);
-            if (!$exercise) continue;
+            if (! $exercise) {
+                continue;
+            }
 
             $result = $this->exerciseService->deleteExercise($exercise, $request->user());
             if ($result['success']) {
@@ -143,14 +155,20 @@ class ExerciseController extends Controller
         }
 
         return response()->json([
+            'ok' => true,
             'deleted_count' => $deleted,
             'errors' => $errors,
         ]);
     }
 
-    public function duplicate(Exercise $exercise)
+    public function duplicate(Exercise $exercise): JsonResponse
     {
         $duplicated = $this->exerciseService->duplicateExercise($exercise, auth()->user());
-        return response()->json($duplicated, 201);
+
+        return response()->json([
+            'ok' => true,
+            'data' => new ExerciseResource($duplicated),
+            'message' => 'Ejercicio duplicado correctamente.',
+        ], 201);
     }
 }
