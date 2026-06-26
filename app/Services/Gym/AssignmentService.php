@@ -6,6 +6,8 @@ use App\Models\Gym\ProfessorStudentAssignment;
 use App\Models\Gym\TemplateAssignment;
 use App\Models\Gym\AssignmentProgress;
 use App\Models\User;
+use App\Support\Gym\GymAssignmentAuthorization;
+use App\Support\Gym\GymStudentEligibility;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Collection;
@@ -23,34 +25,74 @@ class AssignmentService
     public function assignStudentToProfessor(array $data): ProfessorStudentAssignment
     {
         return DB::transaction(function () use ($data) {
-            // Validar que el estudiante no esté ya asignado activamente
-            $existingAssignment = ProfessorStudentAssignment::where('student_id', $data['student_id'])
-                ->where('status', 'active')
-                ->first();
-
-            if ($existingAssignment) {
-                throw new \Exception("El estudiante ya está asignado al profesor {$existingAssignment->professor->name}");
-            }
-
-            // Validar que el profesor existe y tiene rol correcto
             $professor = User::find($data['professor_id']);
             if (!$professor || !$professor->is_professor) {
                 throw new \Exception('Profesor no válido');
             }
 
-            // Validar que el estudiante existe y tiene rol correcto
             $student = User::find($data['student_id']);
             if (!$student || $student->is_professor || $student->is_admin) {
                 throw new \Exception('Estudiante no válido');
             }
 
-            // Crear asignación
+            if (!GymStudentEligibility::isUserEnabled($student)) {
+                throw new \Exception('El estudiante no está habilitado para recibir rutinas.');
+            }
+
+            $existingPair = ProfessorStudentAssignment::query()
+                ->where('professor_id', $data['professor_id'])
+                ->where('student_id', $data['student_id'])
+                ->first();
+
+            if ($existingPair) {
+                if ($existingPair->status !== 'active') {
+                    $existingPair->update([
+                        'status' => 'active',
+                        'end_date' => null,
+                        'assigned_by' => $data['assigned_by'] ?? $existingPair->assigned_by,
+                    ]);
+                }
+
+                return $existingPair->fresh(['professor', 'student', 'assignedBy']);
+            }
+
             $assignment = ProfessorStudentAssignment::create($data);
 
-            // TODO: Enviar notificación al profesor
-            // $this->notifyProfessorNewStudent($assignment);
-
             return $assignment->load(['professor', 'student', 'assignedBy']);
+        });
+    }
+
+    /**
+     * Crear o reutilizar PSA profesor-alumno (sin exigir professor_socio).
+     */
+    public function ensureProfessorStudentAssignment(int $professorId, int $studentId, ?int $assignedBy = null): ProfessorStudentAssignment
+    {
+        $student = User::findOrFail($studentId);
+
+        if (!GymStudentEligibility::isUserEnabled($student)) {
+            throw new \Exception('El socio no está habilitado para recibir rutinas.');
+        }
+
+        $assignedBy = $assignedBy ?? $professorId;
+
+        return DB::transaction(function () use ($professorId, $studentId, $assignedBy) {
+            $psa = ProfessorStudentAssignment::query()->firstOrCreate(
+                ['professor_id' => $professorId, 'student_id' => $studentId],
+                [
+                    'assigned_by' => $assignedBy,
+                    'status' => 'active',
+                    'start_date' => now()->toDateString(),
+                ]
+            );
+
+            if ($psa->status !== 'active') {
+                $psa->update([
+                    'status' => 'active',
+                    'end_date' => null,
+                ]);
+            }
+
+            return $psa->fresh();
         });
     }
 
@@ -137,22 +179,43 @@ class AssignmentService
     public function assignTemplateToStudent(array $data): TemplateAssignment
     {
         return DB::transaction(function () use ($data) {
-            // Validar que el profesor tenga el estudiante asignado
-            $professorStudentAssignment = ProfessorStudentAssignment::find($data['professor_student_assignment_id']);
-            
+            $professorId = (int) auth()->id();
+
+            if (!empty($data['student_id']) && empty($data['professor_student_assignment_id'])) {
+                $psa = $this->ensureProfessorStudentAssignment(
+                    $professorId,
+                    (int) $data['student_id'],
+                    $professorId
+                );
+                $data['professor_student_assignment_id'] = $psa->id;
+            }
+
+            $professorStudentAssignment = ProfessorStudentAssignment::find($data['professor_student_assignment_id'] ?? null);
+
             if (!$professorStudentAssignment || $professorStudentAssignment->status !== 'active') {
                 throw new \Exception('Asignación profesor-estudiante no válida o inactiva');
             }
 
-            // Validar que el profesor autenticado sea el dueño de la asignación
-            if ($professorStudentAssignment->professor_id !== auth()->id()) {
+            if ((int) $professorStudentAssignment->professor_id !== $professorId) {
                 throw new \Exception('No tienes permisos para asignar plantillas a este estudiante');
             }
 
-            // Crear asignación de plantilla
+            if (!GymStudentEligibility::isUserEnabled($professorStudentAssignment->student)) {
+                throw new \Exception('El socio no está habilitado para recibir rutinas.');
+            }
+
+            $data['assigned_by'] = $data['assigned_by'] ?? $professorId;
+
+            if (empty($data['start_date'])) {
+                $data['start_date'] = now()->toDateString();
+            }
+
+            if (!array_key_exists('frequency', $data) || $data['frequency'] === null) {
+                $data['frequency'] = [1, 3, 5];
+            }
+
             $assignment = TemplateAssignment::create($data);
 
-            // Generar progreso inicial basado en frecuencia
             $this->generateProgressSchedule($assignment);
 
             return $assignment->load(['dailyTemplate', 'professorStudentAssignment.student']);
@@ -199,10 +262,18 @@ class AssignmentService
         $query = TemplateAssignment::with([
             'dailyTemplate.exercises.exercise',
             'professorStudentAssignment.professor',
-            'progress'
+            'progress',
         ])->forStudent($studentId);
 
-        // Aplicar filtros
+        if (!empty($filters['professor_id'])) {
+            $query->where(function ($q) use ($filters) {
+                $q->assignedByProfessor((int) $filters['professor_id'])
+                    ->orWhereHas('professorStudentAssignment', function ($sub) use ($filters) {
+                        $sub->where('professor_id', (int) $filters['professor_id']);
+                    });
+            });
+        }
+
         if (!empty($filters['status'])) {
             $query->where('status', $filters['status']);
         }
@@ -246,9 +317,14 @@ class AssignmentService
     {
         $progress = AssignmentProgress::findOrFail($progressId);
 
-        // Validar que el profesor autenticado sea el dueño
-        $professorId = $progress->templateAssignment->professorStudentAssignment->professor_id;
-        if ($professorId !== auth()->id()) {
+        $templateAssignment = $progress->templateAssignment;
+        $psa = $templateAssignment->professorStudentAssignment;
+        $row = (object) [
+            'assigned_by' => $templateAssignment->assigned_by,
+            'psa_professor_id' => $psa?->professor_id,
+        ];
+
+        if (!GymAssignmentAuthorization::canManageDailyAssignment(auth()->user(), $row)) {
             throw new \Exception('No tienes permisos para dar feedback a esta sesión');
         }
 

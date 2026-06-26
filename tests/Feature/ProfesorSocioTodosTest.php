@@ -28,7 +28,7 @@ class ProfesorSocioTodosTest extends TestCase
                 'is_assigned_to_professor' => true,
                 'can_view' => true,
                 'can_edit_progress' => false,
-                'can_assign_routine' => false,
+                'can_assign_routine' => true,
             ])
             ->assertJsonFragment([
                 'id' => $socio2->id,
@@ -37,7 +37,7 @@ class ProfesorSocioTodosTest extends TestCase
                 'is_assigned_to_professor' => false,
                 'can_view' => true,
                 'can_edit_progress' => false,
-                'can_assign_routine' => false,
+                'can_assign_routine' => true,
             ]);
     }
 }

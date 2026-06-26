@@ -14,6 +14,8 @@ use Carbon\Carbon;
 use App\Models\User;
 use App\Models\SocioPadron;
 use App\Models\Gym\ProfessorStudentAssignment;
+use App\Support\Gym\GymAssignmentAuthorization;
+use App\Support\Gym\GymStudentEligibility;
 
 class AssignmentController extends Controller
 {
@@ -29,32 +31,73 @@ class AssignmentController extends Controller
         $search = trim((string) $request->query('search', ''));
 
         $query = \App\Models\SocioPadron::query()
-            ->select(['id', 'apynom', 'dni']);
+            ->select(['id', 'apynom', 'dni', 'hab_controles', 'acceso_full']);
+
+        GymStudentEligibility::scopeEnabledPadron($query);
 
         if ($search !== '') {
             $query->where(function ($w) use ($search) {
                 $w->where('dni', 'like', "%{$search}%")
-                  ->orWhere('apynom', 'like', "%{$search}%");
+                  ->orWhere('apynom', 'like', "%{$search}%")
+                  ->orWhere('sid', 'like', "%{$search}%");
             });
         }
 
         $paginator = $query->orderBy('apynom')->orderBy('dni')->paginate($perPage)->appends($request->query());
 
-        // IDs de socios asignados al profesor
         $asignados = \DB::table('professor_socio')
             ->where('professor_id', $professorId)
             ->pluck('socio_id')
-            ->toArray();
+            ->map(fn ($v) => (int) $v)
+            ->all();
 
-        $data = $paginator->getCollection()->map(function ($item) use ($asignados) {
+        $data = $paginator->getCollection()->map(function ($item) use ($asignados, $professorId) {
+            $socioModel = SocioPadron::find($item->id);
+            $enabled = $socioModel ? GymStudentEligibility::isPadronEnabled($socioModel) : false;
+            $user = null;
+            $psaId = null;
+
+            if ($socioModel) {
+                try {
+                    $user = $this->ensureUserFromSocioPadronSafe($socioModel);
+                    $psa = ProfessorStudentAssignment::query()
+                        ->where('professor_id', $professorId)
+                        ->where('student_id', $user->id)
+                        ->first();
+                    $psaId = $psa?->id;
+                } catch (\Throwable) {
+                    $user = null;
+                }
+            }
+
+            $hasActiveAssignment = false;
+            if ($user) {
+                $hasActiveAssignment = \DB::table('daily_assignments as da')
+                    ->join('professor_student_assignments as psa', 'psa.id', '=', 'da.professor_student_assignment_id')
+                    ->where('psa.student_id', $user->id)
+                    ->where('da.status', 'active')
+                    ->exists();
+            }
+
+            $disabledReason = $socioModel ? GymStudentEligibility::padronDisabledReason($socioModel) : 'Socio no encontrado.';
+
             return [
                 'id' => (int) $item->id,
+                'socio_padron_id' => (int) $item->id,
+                'user_id' => $user ? (int) $user->id : null,
+                'psa_id' => $psaId ? (int) $psaId : null,
                 'apynom' => $item->apynom,
+                'name' => $item->apynom,
                 'dni' => $item->dni,
-                'is_assigned_to_professor' => in_array($item->id, $asignados),
+                'enabled' => $enabled,
+                'is_assigned_to_professor' => in_array((int) $item->id, $asignados, true),
+                'has_active_assignment' => $hasActiveAssignment,
                 'can_view' => true,
                 'can_edit_progress' => false,
-                'can_assign_routine' => false,
+                'can_assign_routine' => $enabled && $user !== null,
+                'can_assign_routine_reason' => $enabled
+                    ? ($user === null ? 'No se pudo vincular el socio con un usuario de gimnasio.' : null)
+                    : $disabledReason,
             ];
         });
 
@@ -188,15 +231,47 @@ class AssignmentController extends Controller
             $professorId = (int) auth()->id();
 
             $validated = $request->validate([
-                'professor_student_assignment_id' => 'required|integer|min:1',
+                'professor_student_assignment_id' => 'nullable|integer|min:1',
+                'student_id' => 'nullable|integer|exists:users,id',
+                'socio_padron_id' => 'nullable|integer|exists:socios_padron,id',
                 'daily_template_id' => 'required|integer|min:1',
                 'start_date' => 'nullable|date',
-                // FIX: si no viene start_date, end_date no debería validar contra algo inexistente
                 'end_date' => 'nullable|date',
                 'frequency' => 'nullable|array|min:1',
                 'frequency.*' => 'integer|between:0,6',
                 'professor_notes' => 'nullable|string|max:1000',
             ]);
+
+            if (empty($validated['professor_student_assignment_id'])
+                && empty($validated['student_id'])
+                && empty($validated['socio_padron_id'])) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Debe indicar professor_student_assignment_id, student_id o socio_padron_id',
+                ], 422);
+            }
+
+            if (!empty($validated['socio_padron_id'])) {
+                $socio = SocioPadron::findOrFail((int) $validated['socio_padron_id']);
+                if (!GymStudentEligibility::isPadronEnabled($socio)) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'El socio no está habilitado para recibir rutinas.',
+                    ], 422);
+                }
+                $userSocio = $this->ensureUserFromSocioPadronSafe($socio);
+                $validated['student_id'] = (int) $userSocio->id;
+            }
+
+            if (!empty($validated['student_id'])) {
+                $student = User::findOrFail((int) $validated['student_id']);
+                if (!GymStudentEligibility::isUserEnabled($student)) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'El socio no está habilitado para recibir rutinas.',
+                    ], 422);
+                }
+            }
 
             // Validación manual consistente start/end
             if (!empty($validated['start_date']) && !empty($validated['end_date'])) {
@@ -208,8 +283,17 @@ class AssignmentController extends Controller
                 }
             }
 
-            $incoming = (int) $validated['professor_student_assignment_id'];
-            $psaId = $this->resolveProfessorStudentAssignmentId($incoming, $professorId);
+            $incoming = (int) ($validated['professor_student_assignment_id'] ?? 0);
+            if ($incoming > 0) {
+                $psaId = $this->resolveProfessorStudentAssignmentId($incoming, $professorId);
+            } else {
+                $psa = $this->assignmentService->ensureProfessorStudentAssignment(
+                    $professorId,
+                    (int) $validated['student_id'],
+                    $professorId
+                );
+                $psaId = (int) $psa->id;
+            }
 
             $psa = ProfessorStudentAssignment::query()
                 ->where('id', $psaId)
@@ -306,19 +390,19 @@ class AssignmentController extends Controller
                     ], 404);
                 }
 
-                $isAssigned = DB::table('professor_socio')
-                    ->where('professor_id', $professorId)
-                    ->where('socio_id', (int) $socio->id)
-                    ->exists();
-
-                if (!$isAssigned) {
+                if (!GymStudentEligibility::isPadronEnabled($socio)) {
                     return response()->json([
                         'success' => false,
-                        'message' => 'Alumno no asignado a este profesor'
-                    ], 403);
+                        'message' => 'El socio no está habilitado para recibir rutinas.'
+                    ], 422);
                 }
 
                 $user = $this->ensureUserFromSocioPadronSafe($socio);
+            } elseif (!GymStudentEligibility::isUserEnabled($user)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'El socio no está habilitado para recibir rutinas.'
+                ], 422);
             }
 
             $psa = DB::transaction(function () use ($professorId, $user) {
@@ -351,8 +435,16 @@ class AssignmentController extends Controller
 
             $query = DB::table('daily_assignments as da')
                 ->whereIn('da.professor_student_assignment_id', $psaIds)
-                ->where('da.status', 'active')
-                ->orderByDesc('da.start_date')
+                ->where('da.status', 'active');
+
+            if (!GymAssignmentAuthorization::isAdmin($request->user())) {
+                $query->where(function ($q) use ($professorId, $psaIds) {
+                    $q->where('da.assigned_by', $professorId)
+                        ->orWhereIn('da.professor_student_assignment_id', $psaIds);
+                });
+            }
+
+            $query->orderByDesc('da.start_date')
                 ->select('da.*');
 
             // Attempt to join templates; gracefully skip if table missing
@@ -394,26 +486,17 @@ class AssignmentController extends Controller
     public function show(int $assignmentId): JsonResponse
     {
         try {
-            $professorId = (int) auth()->id();
-
-            $query = DB::table('daily_assignments as da')
-                ->join('professor_student_assignments as psa', 'psa.id', '=', 'da.professor_student_assignment_id')
-                ->where('da.id', $assignmentId)
-                ->where('psa.professor_id', $professorId)
-                ->select('da.*');
-
-            if (\Illuminate\Support\Facades\Schema::hasTable('gym_daily_templates')) {
-                $query->leftJoin('gym_daily_templates as dt', 'dt.id', '=', 'da.daily_template_id')
-                    ->addSelect('dt.title as daily_template_title');
-            }
-
-            $row = $query->first();
+            $row = $this->findDailyAssignmentRow($assignmentId);
 
             if (!$row) {
                 return response()->json(['success' => false, 'message' => 'Asignación no encontrada'], 404);
             }
 
+            GymAssignmentAuthorization::abortUnlessCanManageDailyAssignment(auth()->user(), $row);
+
             return response()->json(['success' => true, 'data' => $row]);
+        } catch (\Symfony\Component\HttpKernel\Exception\HttpException $e) {
+            throw $e;
         } catch (\Throwable $e) {
             \Illuminate\Support\Facades\Log::error('show error', ['assignment_id' => $assignmentId, 'error' => $e->getMessage()]);
             return response()->json(['success' => false, 'message' => 'Error al obtener asignación', 'error' => $e->getMessage()], 500);
@@ -422,13 +505,10 @@ class AssignmentController extends Controller
 
     /**
      * Actualizar asignación (daily_assignments)
-     * PHASE 1: Use gym_daily_templates; validate ownership.
      */
     public function updateAssignment(Request $request, int $assignmentId): JsonResponse
     {
         try {
-            $professorId = (int) auth()->id();
-
             $validated = $request->validate([
                 'end_date' => 'nullable|date',
                 'frequency' => 'sometimes|array|min:1',
@@ -437,16 +517,13 @@ class AssignmentController extends Controller
                 'status' => 'sometimes|in:active,paused,completed,cancelled',
             ]);
 
-            $row = DB::table('daily_assignments as da')
-                ->join('professor_student_assignments as psa', 'psa.id', '=', 'da.professor_student_assignment_id')
-                ->where('da.id', $assignmentId)
-                ->where('psa.professor_id', $professorId)
-                ->select(['da.*'])
-                ->first();
+            $row = $this->findDailyAssignmentRow($assignmentId);
 
             if (!$row) {
                 return response()->json(['success' => false, 'message' => 'Asignación no encontrada'], 404);
             }
+
+            GymAssignmentAuthorization::abortUnlessCanManageDailyAssignment($request->user(), $row);
 
             $start = Carbon::parse($row->start_date);
             if (!empty($validated['end_date'])) {
@@ -472,6 +549,8 @@ class AssignmentController extends Controller
             $fresh = $query->first();
 
             return response()->json(['success' => true, 'data' => $fresh]);
+        } catch (\Symfony\Component\HttpKernel\Exception\HttpException $e) {
+            throw $e;
         } catch (\Throwable $e) {
             \Illuminate\Support\Facades\Log::error('updateAssignment error', [
                 'assignment_id' => $assignmentId,
@@ -487,18 +566,13 @@ class AssignmentController extends Controller
      */
     public function unassignTemplate(int $assignmentId): JsonResponse
     {
-        $professorId = (int) auth()->id();
-
-        $row = DB::table('daily_assignments as da')
-            ->join('professor_student_assignments as psa', 'psa.id', '=', 'da.professor_student_assignment_id')
-            ->where('da.id', $assignmentId)
-            ->where('psa.professor_id', $professorId)
-            ->select(['da.id'])
-            ->first();
+        $row = $this->findDailyAssignmentRow($assignmentId);
 
         if (!$row) {
             return response()->json(['success' => false, 'message' => 'Asignación no encontrada'], 404);
         }
+
+        GymAssignmentAuthorization::abortUnlessCanManageDailyAssignment(auth()->user(), $row);
 
         DB::table('daily_assignments')->where('id', $assignmentId)->delete();
 
@@ -520,16 +594,15 @@ class AssignmentController extends Controller
 
         $socioPadronId = $incomingId;
 
-        $isAssigned = DB::table('professor_socio')
-            ->where('professor_id', $professorId)
-            ->where('socio_id', $socioPadronId)
-            ->exists();
-
-        if (!$isAssigned) {
-            abort(403, 'El socio no está asignado a este profesor');
+        $socio = SocioPadron::query()->find($socioPadronId);
+        if (!$socio) {
+            abort(404, 'Socio no encontrado en el padrón');
         }
 
-        $socio = SocioPadron::query()->findOrFail($socioPadronId);
+        if (!GymStudentEligibility::isPadronEnabled($socio)) {
+            abort(422, 'El socio no está habilitado para recibir rutinas.');
+        }
+
         $userSocio = $this->ensureUserFromSocioPadron($socio);
 
         $psa = ProfessorStudentAssignment::query()->firstOrCreate(
@@ -563,6 +636,8 @@ class AssignmentController extends Controller
                 'is_admin' => 0,
                 'is_professor' => 0,
                 'account_status' => 'active',
+                'student_gym' => GymStudentEligibility::isPadronEnabled($lockedSocio),
+                'student_gym_since' => GymStudentEligibility::isPadronEnabled($lockedSocio) ? now() : null,
                 'name' => $name !== '' ? $name : 'Socio',
                 'email' => null,
                 'socio_id' => $sid,
@@ -616,7 +691,21 @@ class AssignmentController extends Controller
 
     private function ensureUserFromSocioPadron(SocioPadron $socio): User
     {
-        // Backward compat wrapper
         return $this->ensureUserFromSocioPadronSafe($socio);
+    }
+
+    private function findDailyAssignmentRow(int $assignmentId): ?object
+    {
+        $query = DB::table('daily_assignments as da')
+            ->join('professor_student_assignments as psa', 'psa.id', '=', 'da.professor_student_assignment_id')
+            ->where('da.id', $assignmentId)
+            ->select(['da.*', 'psa.professor_id as psa_professor_id']);
+
+        if (\Illuminate\Support\Facades\Schema::hasTable('gym_daily_templates')) {
+            $query->leftJoin('gym_daily_templates as dt', 'dt.id', '=', 'da.daily_template_id')
+                ->addSelect('dt.title as daily_template_title');
+        }
+
+        return $query->first();
     }
 }

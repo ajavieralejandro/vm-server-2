@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Gym\Admin;
 use App\Http\Controllers\Controller;
 use App\Models\Gym\WeeklyAssignment;
 use App\Services\Gym\WeeklyAssignmentService;
+use App\Support\Gym\GymAssignmentAuthorization;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 
@@ -43,6 +44,8 @@ class WeeklyAssignmentController extends Controller
      */
     public function show(WeeklyAssignment $weeklyAssignment): JsonResponse
     {
+        GymAssignmentAuthorization::abortUnlessCanManageWeeklyAssignment(auth()->user(), $weeklyAssignment);
+
         $assignment = $this->weeklyAssignmentService->getAssignmentWithDetails($weeklyAssignment);
 
         return response()->json($assignment);
@@ -120,6 +123,8 @@ class WeeklyAssignmentController extends Controller
      */
     public function update(Request $request, WeeklyAssignment $weeklyAssignment): JsonResponse
     {
+        GymAssignmentAuthorization::abortUnlessCanManageWeeklyAssignment($request->user(), $weeklyAssignment);
+
         $validated = $request->validate([
             'week_start' => 'sometimes|date',
             'week_end' => 'sometimes|date|after_or_equal:week_start',
@@ -187,6 +192,8 @@ class WeeklyAssignmentController extends Controller
      */
     public function destroy(WeeklyAssignment $weeklyAssignment): JsonResponse
     {
+        GymAssignmentAuthorization::abortUnlessCanManageWeeklyAssignment(auth()->user(), $weeklyAssignment);
+
         try {
             $this->weeklyAssignmentService->deleteWeeklyAssignment($weeklyAssignment);
 
@@ -205,6 +212,8 @@ class WeeklyAssignmentController extends Controller
      */
     public function duplicate(Request $request, WeeklyAssignment $weeklyAssignment): JsonResponse
     {
+        GymAssignmentAuthorization::abortUnlessCanManageWeeklyAssignment($request->user(), $weeklyAssignment);
+
         $validated = $request->validate([
             'week_start' => 'required|date',
             'week_end' => 'required|date|after_or_equal:week_start',
@@ -281,6 +290,8 @@ class WeeklyAssignmentController extends Controller
      */
     public function adherence(WeeklyAssignment $weeklyAssignment): JsonResponse
     {
+        GymAssignmentAuthorization::abortUnlessCanManageWeeklyAssignment(auth()->user(), $weeklyAssignment);
+
         $adherence = $this->weeklyAssignmentService->getAssignmentAdherence($weeklyAssignment);
         
         return response()->json($adherence);
