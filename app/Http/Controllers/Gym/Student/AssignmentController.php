@@ -19,45 +19,58 @@ class AssignmentController extends Controller
     {
         try {
             $user = $request->user();
-            
-            // Buscar asignación profesor-estudiante
-            $professorAssignment = ProfessorStudentAssignment::where('student_id', $user->id)
-                                                             ->where('status', 'active')
-                                                             ->with('professor')
-                                                             ->first();
-            
-            if (!$professorAssignment) {
+
+            $psaIds = ProfessorStudentAssignment::where('student_id', $user->id)
+                ->where('status', 'active')
+                ->pluck('id');
+
+            if ($psaIds->isEmpty()) {
                 return response()->json([
-                    'message' => 'No tienes un profesor asignado',
+                    'message' => 'No tienes rutinas asignadas',
                     'data' => [
                         'professor' => null,
+                        'professors' => [],
                         'templates' => [],
                     ],
                 ]);
             }
-            
-            // Obtener plantillas asignadas
-            $templateAssignments = TemplateAssignment::where('professor_student_assignment_id', $professorAssignment->id)
-                                                    ->where('status', 'active')
-                                                    ->with([
-                                                        'dailyTemplate.exercises.exercise',
-                                                        'dailyTemplate.exercises.sets',
-                                                        'professorStudentAssignment.professor'
-                                                    ])
-                                                    ->orderBy('start_date', 'asc')
-                                                    ->get();
-            
+
+            $professorAssignments = ProfessorStudentAssignment::whereIn('id', $psaIds)
+                ->with('professor')
+                ->get();
+
+            $templateAssignments = TemplateAssignment::whereIn('professor_student_assignment_id', $psaIds)
+                ->where('status', 'active')
+                ->with([
+                    'dailyTemplate.exercises.exercise',
+                    'dailyTemplate.exercises.sets',
+                    'professorStudentAssignment.professor',
+                    'assignedBy',
+                ])
+                ->orderBy('start_date', 'asc')
+                ->get();
+
+            $primaryProfessor = $professorAssignments->first()?->professor;
+
             $response = [
-                'professor' => [
-                    'id' => $professorAssignment->professor ? $professorAssignment->professor->id : null,
-                    'name' => $professorAssignment->professor ? $professorAssignment->professor->name : null,
-                    'email' => $professorAssignment->professor ? $professorAssignment->professor->email : null
-                ],
+                'professor' => $primaryProfessor ? [
+                    'id' => $primaryProfessor->id,
+                    'name' => $primaryProfessor->name,
+                    'email' => $primaryProfessor->email,
+                ] : null,
+                'professors' => $professorAssignments->map(function ($psa) {
+                    return [
+                        'id' => $psa->professor?->id,
+                        'name' => $psa->professor?->name,
+                        'email' => $psa->professor?->email,
+                    ];
+                })->values(),
                 'templates' => $templateAssignments->map(function ($assignment) {
                     $dailyTemplate = $assignment->dailyTemplate;
-                    $professor = $assignment->professorStudentAssignment
-                        ? $assignment->professorStudentAssignment->professor
-                        : null;
+                    $professor = $assignment->assignedBy
+                        ?? ($assignment->professorStudentAssignment
+                            ? $assignment->professorStudentAssignment->professor
+                            : null);
                     $frequency = $assignment->frequency;
 
                     return [
@@ -216,32 +229,31 @@ class AssignmentController extends Controller
             $date = $request->input('date', now()->toDateString());
             $startOfWeek = Carbon::parse($date)->startOfWeek();
             $endOfWeek = Carbon::parse($date)->endOfWeek();
-            
-            // Buscar asignación profesor-estudiante
-            $professorAssignment = ProfessorStudentAssignment::where('student_id', $user->id)
-                                                             ->where('status', 'active')
-                                                             ->first();
-            
-            if (!$professorAssignment) {
+
+            $psaIds = ProfessorStudentAssignment::where('student_id', $user->id)
+                ->where('status', 'active')
+                ->pluck('id');
+
+            if ($psaIds->isEmpty()) {
                 return response()->json([
-                    'message' => 'No tienes un profesor asignado',
-                    'data' => $this->getEmptyWeek($startOfWeek, $endOfWeek)
+                    'message' => 'No tienes rutinas asignadas',
+                    'data' => $this->getEmptyWeek($startOfWeek, $endOfWeek),
                 ]);
             }
-            
-            // Obtener plantillas activas
-            $templateAssignments = TemplateAssignment::where('professor_student_assignment_id', $professorAssignment->id)
-                                                    ->where('status', 'active')
-                                                    ->where('start_date', '<=', $endOfWeek)
-                                                    ->where(function($query) use ($startOfWeek) {
-                                                        $query->whereNull('end_date')
-                                                              ->orWhere('end_date', '>=', $startOfWeek);
-                                                    })
-                                                    ->with([
-                                                        'dailyTemplate',
-                                                        'professorStudentAssignment.professor'
-                                                    ])
-                                                    ->get();
+
+            $templateAssignments = TemplateAssignment::whereIn('professor_student_assignment_id', $psaIds)
+                ->where('status', 'active')
+                ->where('start_date', '<=', $endOfWeek)
+                ->where(function ($query) use ($startOfWeek) {
+                    $query->whereNull('end_date')
+                        ->orWhere('end_date', '>=', $startOfWeek);
+                })
+                ->with([
+                    'dailyTemplate',
+                    'professorStudentAssignment.professor',
+                    'assignedBy',
+                ])
+                ->get();
             
             // Generar calendario semanal
             $weekDays = [];

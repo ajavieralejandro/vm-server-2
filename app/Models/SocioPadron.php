@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 
 class SocioPadron extends Model
 {
+    /** @use HasFactory<\Database\Factories\SocioPadronFactory> */
     use HasFactory;
 
     protected $table = 'socios_padron';
